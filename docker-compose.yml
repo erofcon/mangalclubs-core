@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mangalclubs-postgres
+    environment:
+      POSTGRES_DB: mangalclubs
+      POSTGRES_USER: mangalclubs
+      POSTGRES_PASSWORD: mangalclubs_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - mangalclubs_pg_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer:latest
+    container_name: mangalclubs-adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  mangalclubs_pg_data:

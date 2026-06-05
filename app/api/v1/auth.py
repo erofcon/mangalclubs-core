@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -32,6 +32,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 def client_meta(request: Request):
     return request.client.host if request.client else None, request.headers.get("user-agent")
+
+
+def refresh_token_from_request(request: Request, token: str | None) -> str:
+    refresh_token = token or request.cookies.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Refresh token is required")
+
+    return refresh_token
 
 
 def build_subject_out(subject, subject_type: AuthSubjectType) -> AuthSubjectOut:
@@ -125,7 +133,7 @@ async def refresh(payload: RefreshRequest, request: Request, response: Response,
     ip, ua = client_meta(request)
     tokens, subject, subject_type = await rotate_refresh_token(
         db,
-        refresh_token=payload.refresh_token,
+        refresh_token=refresh_token_from_request(request, payload.refresh_token),
         device_id=payload.device_id,
         device_name=payload.device_name,
         ip_address=ip,
@@ -141,9 +149,8 @@ async def logout(payload: LogoutRequest, request: Request, response: Response, d
     ip, ua = client_meta(request)
     await logout_refresh_session(
         db,
-        refresh_token=payload.refresh_token,
+        refresh_token=refresh_token_from_request(request, payload.refresh_token),
         device_id=payload.device_id,
-        device_name=payload.device_name,
         ip_address=ip,
         user_agent=ua,
     )

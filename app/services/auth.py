@@ -1,4 +1,5 @@
 from datetime import timedelta
+import hmac
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -34,21 +35,16 @@ def normalize_phone_or_422(phone_raw: str) -> str:
 def validate_refresh_session_context(
     session: RefreshSession,
     *,
-    device_id: str | None,
-    device_name: str | None,
+    device_id: str,
     ip_address: str | None,
     user_agent: str | None,
 ) -> None:
-    checks = (
-        (session.device_id, device_id),
-        (session.device_name, device_name),
-        (session.ip_address, ip_address),
-        (session.user_agent, user_agent),
-    )
-
-    # Refresh-токен должен обновляться из той же клиентской сессии, где был выдан.
-    if any(expected and expected != actual for expected, actual in checks):
+    # Bind refresh rotation to a stable client installation, not to volatile IP or user-agent.
+    if not session.device_id or not hmac.compare_digest(session.device_id, device_id):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid refresh token")
+
+    session.ip_address = ip_address
+    session.user_agent = user_agent
 
 
 async def request_customer_otp(db: AsyncSession, phone_raw: str) -> None:
@@ -87,7 +83,7 @@ async def verify_customer_otp_and_issue_tokens(
     *,
     phone_raw: str,
     code: str,
-    device_id: str | None,
+    device_id: str,
     device_name: str | None,
     ip_address: str | None,
     user_agent: str | None,
@@ -102,6 +98,7 @@ async def verify_customer_otp_and_issue_tokens(
             OtpChallenge.expires_at > now_utc(),
         )
         .order_by(OtpChallenge.created_at.desc())
+        .with_for_update()
     )
 
     if not challenge or challenge.attempts_left <= 0:
@@ -140,7 +137,7 @@ async def staff_login_and_issue_tokens(
     *,
     email: str,
     password: str,
-    device_id: str | None,
+    device_id: str,
     device_name: str | None,
     ip_address: str | None,
     user_agent: str | None,
@@ -174,7 +171,7 @@ async def issue_tokens(
     subject_id,
     subject_type: AuthSubjectType,
     role: str | None,
-    device_id: str | None,
+    device_id: str,
     device_name: str | None,
     ip_address: str | None,
     user_agent: str | None,
@@ -207,17 +204,19 @@ async def rotate_refresh_token(
     db: AsyncSession,
     *,
     refresh_token: str,
-    device_id: str | None,
+    device_id: str,
     device_name: str | None,
     ip_address: str | None,
     user_agent: str | None,
 ):
     session = await db.scalar(
-        select(RefreshSession).where(
+        select(RefreshSession)
+        .where(
             RefreshSession.token_hash == hash_token(refresh_token),
             RefreshSession.revoked_at.is_(None),
             RefreshSession.expires_at > now_utc(),
         )
+        .with_for_update()
     )
 
     if not session:
@@ -226,7 +225,6 @@ async def rotate_refresh_token(
     validate_refresh_session_context(
         session,
         device_id=device_id,
-        device_name=device_name,
         ip_address=ip_address,
         user_agent=user_agent,
     )
@@ -249,7 +247,7 @@ async def rotate_refresh_token(
         subject_type=session.subject_type,
         role=role,
         device_id=session.device_id,
-        device_name=session.device_name,
+        device_name=device_name or session.device_name,
         ip_address=session.ip_address,
         user_agent=session.user_agent,
     )
@@ -262,8 +260,7 @@ async def logout_refresh_session(
     db: AsyncSession,
     *,
     refresh_token: str,
-    device_id: str | None,
-    device_name: str | None,
+    device_id: str,
     ip_address: str | None,
     user_agent: str | None,
 ) -> None:
@@ -280,7 +277,6 @@ async def logout_refresh_session(
     validate_refresh_session_context(
         session,
         device_id=device_id,
-        device_name=device_name,
         ip_address=ip_address,
         user_agent=user_agent,
     )

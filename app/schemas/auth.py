@@ -1,14 +1,42 @@
 from uuid import UUID
+from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
-class DeviceInfo(BaseModel):
-    device_id: str | None = Field(default=None, max_length=128)
+class DeviceIdentity(BaseModel):
+    device_id: str = Field(min_length=8, max_length=128)
+
+    @field_validator("device_id", mode="before")
+    @classmethod
+    def strip_device_id(cls, value: Any) -> Any:
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+
+        return value
+
+
+class DeviceInfo(DeviceIdentity):
     device_name: str | None = Field(default=None, max_length=255)
 
+    @field_validator("device_name", mode="before")
+    @classmethod
+    def strip_device_name(cls, value: Any) -> Any:
+        if value is None:
+            return None
 
-class CustomerOtpRequest(DeviceInfo):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+
+        return value
+
+
+class CustomerOtpRequest(BaseModel):
     phone: str
 
 
@@ -23,11 +51,11 @@ class StaffLogin(DeviceInfo):
 
 
 class RefreshRequest(DeviceInfo):
-    refresh_token: str
+    refresh_token: str | None = None
 
 
-class LogoutRequest(DeviceInfo):
-    refresh_token: str
+class LogoutRequest(DeviceIdentity):
+    refresh_token: str | None = None
 
 
 class AuthSubjectOut(BaseModel):

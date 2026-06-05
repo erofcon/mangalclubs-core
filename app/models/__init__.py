@@ -3,6 +3,7 @@ from app.models.booking import Booking, BookingCategory, BookingImage
 from app.models.customer import Customer
 from app.models.organization import Organization, OrganizationWorkingHour
 from app.models.staff import StaffUser
+from app.models.story import Story, StorySlide
 
 __all__ = (
     "Booking",
@@ -12,6 +13,8 @@ __all__ = (
     "Organization",
     "OrganizationWorkingHour",
     "StaffUser",
+    "Story",
+    "StorySlide",
     "OtpChallenge",
     "RefreshSession",
 )

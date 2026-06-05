@@ -19,6 +19,8 @@ from app.models import (
     OtpChallenge,
     RefreshSession,
     StaffUser,
+    Story,
+    StorySlide,
 )
 from app.models.base import Base
 
@@ -33,6 +35,8 @@ _registered_models = (
     OtpChallenge,
     RefreshSession,
     StaffUser,
+    Story,
+    StorySlide,
 )
 
 # this is the Alembic Config object, which provides

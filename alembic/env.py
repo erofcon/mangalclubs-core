@@ -9,11 +9,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
-from app.models import Customer, OtpChallenge, RefreshSession, StaffUser
+from app.models import Customer, Organization, OrganizationWorkingHour, OtpChallenge, RefreshSession, StaffUser
 from app.models.base import Base
 
 # Keep model imports referenced so Base.metadata is populated for autogenerate.
-_registered_models = (Customer, OtpChallenge, RefreshSession, StaffUser)
+_registered_models = (Customer, Organization, OrganizationWorkingHour, OtpChallenge, RefreshSession, StaffUser)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

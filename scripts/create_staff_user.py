@@ -22,7 +22,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--email", required=True, help="Staff email used for admin login.")
     parser.add_argument("--role", choices=[role.value for role in StaffRole], default=StaffRole.admin.value)
     parser.add_argument("--phone", default=None, help="Optional staff phone number.")
-    parser.add_argument(
+    password_group = parser.add_mutually_exclusive_group()
+    password_group.add_argument(
+        "--password",
+        default=None,
+        help="Use this password instead of interactive prompt.",
+    )
+    password_group.add_argument(
         "--password-env",
         default=None,
         help="Read password from this environment variable instead of interactive prompt.",
@@ -35,12 +41,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def read_password(password_env: str | None) -> str:
-    if password_env:
-        password = os.getenv(password_env)
-        if not password:
-            raise ValueError(f"Environment variable {password_env} is empty or not set.")
+def read_password(password: str | None, password_env: str | None) -> str:
+    if password:
         return password
+
+    if password_env:
+        env_password = os.getenv(password_env)
+        if not env_password:
+            raise ValueError(f"Environment variable {password_env} is empty or not set.")
+        return env_password
 
     password = getpass("Password: ")
     password_repeat = getpass("Repeat password: ")
@@ -68,7 +77,7 @@ def normalize_optional_phone(phone: str | None) -> str | None:
 
 async def create_or_update_staff(args: argparse.Namespace) -> int:
     email = args.email.strip().lower()
-    password = read_password(args.password_env)
+    password = read_password(args.password, args.password_env)
     validate_password(password)
     phone = normalize_optional_phone(args.phone)
     role = StaffRole(args.role)

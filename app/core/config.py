@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     app_name: str = "MangalClubs Core"
     debug: bool = False
     database_url: str
+    media_root: str = "media"
+    media_url: str = "/media"
 
     jwt_secret_key: str
     access_token_minutes: int = 15

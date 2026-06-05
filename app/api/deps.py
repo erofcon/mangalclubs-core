@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.customer import Customer
-from app.models.staff import StaffUser
+from app.models.staff import StaffRole, StaffUser
 from app.security.tokens import decode_token
 
 bearer = HTTPBearer(auto_error=False)
@@ -49,5 +49,12 @@ async def get_current_staff(
     staff = await db.get(StaffUser, UUID(payload["sub"]))
     if not staff or not staff.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    return staff
+
+
+async def get_current_admin(staff: StaffUser = Depends(get_current_staff)) -> StaffUser:
+    if staff.role != StaffRole.admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin only")
 
     return staff

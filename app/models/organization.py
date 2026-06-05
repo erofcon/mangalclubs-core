@@ -29,6 +29,18 @@ class Organization(Base, IdMixin, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="OrganizationWorkingHour.weekday",
     )
+    booking_categories: Mapped[list[BookingCategory]] = relationship(
+        "BookingCategory",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        order_by="BookingCategory.sort_order",
+    )
+    bookings: Mapped[list[Booking]] = relationship(
+        "Booking",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        order_by="Booking.sort_order",
+    )
 
     __table_args__ = (
         CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_organizations_latitude_range"),

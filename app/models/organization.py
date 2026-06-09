@@ -23,7 +23,11 @@ class Organization(Base, IdMixin, TimestampMixin):
     latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     photo_url: Mapped[str | None] = mapped_column(String(1024))
-    iiko_api_login: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
+    iiko_api_login: Mapped[str | None] = mapped_column(String(128), index=True)
+    iiko_organization_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    accepts_pickup: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    accepts_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_default_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     working_hours: Mapped[list[OrganizationWorkingHour]] = relationship(
         back_populates="organization",
@@ -44,6 +48,12 @@ class Organization(Base, IdMixin, TimestampMixin):
     )
     iiko_token: Mapped[IikoToken | None] = relationship(
         "IikoToken",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    iiko_menu_snapshot: Mapped[IikoMenuSnapshot | None] = relationship(
+        "IikoMenuSnapshot",
         back_populates="organization",
         cascade="all, delete-orphan",
         uselist=False,

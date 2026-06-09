@@ -62,10 +62,18 @@ async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> 
         longitude=payload.coordinates.longitude,
         photo_url=str(payload.photo_url) if payload.photo_url is not None else None,
         iiko_api_login=payload.iiko_api_login,
+        iiko_organization_id=payload.iiko_organization_id,
+        accepts_pickup=payload.accepts_pickup,
+        accepts_delivery=payload.accepts_delivery,
+        is_default_delivery=payload.is_default_delivery,
     )
     replace_working_hours(organization, payload.working_hours)
+    validate_organization_delivery_settings(organization)
 
     db.add(organization)
+    if organization.is_default_delivery:
+        await reset_default_delivery(db, organization.id)
+
     try:
         await db.commit()
     except IntegrityError:
@@ -86,7 +94,19 @@ async def update_organization(
     organization = await get_organization_by_id(db, organization_id)
     data = payload.model_dump(exclude_unset=True)
 
-    for field in ("slug", "name", "city", "address", "phone", "intro", "iiko_api_login"):
+    for field in (
+        "slug",
+        "name",
+        "city",
+        "address",
+        "phone",
+        "intro",
+        "iiko_api_login",
+        "iiko_organization_id",
+        "accepts_pickup",
+        "accepts_delivery",
+        "is_default_delivery",
+    ):
         if field in data:
             setattr(organization, field, data[field])
 
@@ -99,6 +119,11 @@ async def update_organization(
 
     if payload.working_hours is not None:
         replace_working_hours(organization, payload.working_hours)
+
+    validate_organization_delivery_settings(organization)
+
+    if organization.is_default_delivery:
+        await reset_default_delivery(db, organization.id)
 
     try:
         await db.commit()
@@ -191,3 +216,22 @@ def replace_working_hours(organization: Organization, working_hours) -> None:
         )
         for item in working_hours
     ]
+
+
+async def reset_default_delivery(db: AsyncSession, organization_id: UUID) -> None:
+    result = await db.scalars(
+        select(Organization).where(
+            Organization.id != organization_id,
+            Organization.is_default_delivery.is_(True),
+        )
+    )
+    for organization in result:
+        organization.is_default_delivery = False
+
+
+def validate_organization_delivery_settings(organization: Organization) -> None:
+    if organization.is_default_delivery and not organization.accepts_delivery:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Default delivery organization must accept delivery orders",
+        )

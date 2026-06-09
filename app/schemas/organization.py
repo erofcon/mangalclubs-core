@@ -59,6 +59,10 @@ class OrganizationBase(BaseModel):
     coordinates: CoordinatesIn
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
+    iiko_organization_id: str | None = Field(default=None, min_length=1, max_length=64)
+    accepts_pickup: bool = True
+    accepts_delivery: bool = False
+    is_default_delivery: bool = False
     working_hours: list[OrganizationWorkingHourCreate] = Field(min_length=1, max_length=7)
 
     @field_validator("name", "city", "address", "phone", "intro", mode="before")
@@ -68,9 +72,9 @@ class OrganizationBase(BaseModel):
             value = value.strip()
         return value
 
-    @field_validator("iiko_api_login", mode="before")
+    @field_validator("iiko_api_login", "iiko_organization_id", mode="before")
     @classmethod
-    def strip_optional_iiko_api_login(cls, value: Any) -> Any:
+    def strip_optional_iiko_strings(cls, value: Any) -> Any:
         if value is None:
             return None
         if isinstance(value, str):
@@ -96,6 +100,12 @@ class OrganizationBase(BaseModel):
             raise ValueError("working_hours must contain each weekday only once")
         return value
 
+    @model_validator(mode="after")
+    def validate_delivery_flags(self):
+        if self.is_default_delivery and not self.accepts_delivery:
+            raise ValueError("Default delivery organization must accept delivery orders")
+        return self
+
 
 class OrganizationCreate(OrganizationBase):
     slug: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
@@ -118,6 +128,10 @@ class OrganizationUpdate(BaseModel):
     coordinates: CoordinatesIn | None = None
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
+    iiko_organization_id: str | None = Field(default=None, min_length=1, max_length=64)
+    accepts_pickup: bool | None = None
+    accepts_delivery: bool | None = None
+    is_default_delivery: bool | None = None
     working_hours: list[OrganizationWorkingHourUpdate] | None = Field(default=None, min_length=1, max_length=7)
 
     @field_validator("slug", mode="before")
@@ -134,9 +148,9 @@ class OrganizationUpdate(BaseModel):
             value = value.strip()
         return value
 
-    @field_validator("iiko_api_login", mode="before")
+    @field_validator("iiko_api_login", "iiko_organization_id", mode="before")
     @classmethod
-    def strip_update_iiko_api_login(cls, value: Any) -> Any:
+    def strip_update_iiko_strings(cls, value: Any) -> Any:
         if value is None:
             return None
         if isinstance(value, str):
@@ -168,6 +182,12 @@ class OrganizationUpdate(BaseModel):
             raise ValueError("working_hours must contain each weekday only once")
         return value
 
+    @model_validator(mode="after")
+    def validate_update_delivery_flags(self):
+        if self.is_default_delivery is True and self.accepts_delivery is False:
+            raise ValueError("Default delivery organization must accept delivery orders")
+        return self
+
 
 class OrganizationOut(BaseModel):
     id: UUID
@@ -179,6 +199,10 @@ class OrganizationOut(BaseModel):
     intro: str
     coordinates: CoordinatesOut
     photo_url: str | None
+    iiko_organization_id: str | None
+    accepts_pickup: bool
+    accepts_delivery: bool
+    is_default_delivery: bool
     working_hours: list[OrganizationWorkingHourOut]
 
     model_config = ConfigDict(from_attributes=True)
@@ -188,7 +212,12 @@ class OrganizationAvailabilityOut(BaseModel):
     organization_id: UUID
     slug: str
     orders_available: bool
-    iiko_status: Literal["not_configured", "connected", "refreshing", "unavailable"]
-    reason: Literal["iiko_not_configured", "iiko_connected", "iiko_refreshing", "iiko_unavailable"]
+    iiko_status: Literal["not_configured", "connected", "unavailable", "terminal_unavailable"]
+    reason: Literal[
+        "iiko_not_configured",
+        "iiko_connected",
+        "iiko_unavailable",
+        "iiko_terminal_unavailable",
+    ]
     message: str
     checked_at: datetime

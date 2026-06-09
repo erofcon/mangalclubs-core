@@ -8,24 +8,28 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bookings import router as bookings_router
 from app.api.v1.delivery import router as delivery_router
+from app.api.v1.menu import router as menu_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.stories import router as stories_router
 from app.core.config import settings
 from app.services.iiko import run_iiko_token_refresher
+from app.services.menu import run_iiko_menu_refresher
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
-    refresher_task = asyncio.create_task(run_iiko_token_refresher(stop_event))
+    token_refresher_task = asyncio.create_task(run_iiko_token_refresher(stop_event))
+    menu_refresher_task = asyncio.create_task(run_iiko_menu_refresher(stop_event))
 
     try:
         yield
     finally:
         stop_event.set()
-        refresher_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await refresher_task
+        for task in (token_refresher_task, menu_refresher_task):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -38,6 +42,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(organizations_router, prefix="/api/v1")
 app.include_router(bookings_router, prefix="/api/v1")
 app.include_router(delivery_router, prefix="/api/v1")
+app.include_router(menu_router, prefix="/api/v1")
 app.include_router(stories_router, prefix="/api/v1")
 
 

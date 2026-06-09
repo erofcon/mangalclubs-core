@@ -25,8 +25,13 @@ class IikoAuthorizationError(Exception):
     pass
 
 
+class IikoTerminalError(Exception):
+    pass
+
+
 ORDERS_AVAILABLE_MESSAGE = "Онлайн-заказы доступны"
 ORDERS_UNAVAILABLE_MESSAGE = "Онлайн-заказы временно недоступны"
+TERMINAL_UNAVAILABLE_MESSAGE = "Онлайн-заказы временно недоступны: терминал iiko не отвечает"
 
 
 def token_refresh_deadline() -> datetime:
@@ -53,52 +58,150 @@ def should_refresh(token: IikoToken | None) -> bool:
     return token.expires_at <= token_refresh_deadline()
 
 
-def get_iiko_availability(organization: Organization) -> dict:
-    checked_at = utcnow()
-
-    if not organization.iiko_api_login:
-        return {
-            "organization_id": organization.id,
-            "slug": organization.slug,
-            "orders_available": False,
-            "iiko_status": "not_configured",
-            "reason": "iiko_not_configured",
-            "message": ORDERS_UNAVAILABLE_MESSAGE,
-            "checked_at": checked_at,
-        }
-
-    token = organization.iiko_token
-    if token and token.access_token and token.expires_at and token.expires_at > checked_at:
-        if should_refresh(token):
-            return {
-                "organization_id": organization.id,
-                "slug": organization.slug,
-                "orders_available": True,
-                "iiko_status": "refreshing",
-                "reason": "iiko_refreshing",
-                "message": ORDERS_AVAILABLE_MESSAGE,
-                "checked_at": checked_at,
-            }
-
-        return {
-            "organization_id": organization.id,
-            "slug": organization.slug,
-            "orders_available": True,
-            "iiko_status": "connected",
-            "reason": "iiko_connected",
-            "message": ORDERS_AVAILABLE_MESSAGE,
-            "checked_at": checked_at,
-        }
-
+def build_iiko_availability(
+    organization: Organization,
+    *,
+    orders_available: bool,
+    iiko_status: str,
+    reason: str,
+    message: str,
+) -> dict:
     return {
         "organization_id": organization.id,
         "slug": organization.slug,
-        "orders_available": False,
-        "iiko_status": "unavailable",
-        "reason": "iiko_unavailable",
-        "message": ORDERS_UNAVAILABLE_MESSAGE,
-        "checked_at": checked_at,
+        "orders_available": orders_available,
+        "iiko_status": iiko_status,
+        "reason": reason,
+        "message": message,
+        "checked_at": utcnow(),
     }
+
+
+async def get_iiko_availability(db: AsyncSession, organization: Organization) -> dict:
+    if not organization.iiko_api_login or not organization.iiko_organization_id:
+        return build_iiko_availability(
+            organization,
+            orders_available=False,
+            iiko_status="not_configured",
+            reason="iiko_not_configured",
+            message=ORDERS_UNAVAILABLE_MESSAGE,
+        )
+
+    try:
+        access_token = await get_valid_token(db, organization.id)
+    except IikoAuthorizationError:
+        return build_iiko_availability(
+            organization,
+            orders_available=False,
+            iiko_status="unavailable",
+            reason="iiko_unavailable",
+            message=ORDERS_UNAVAILABLE_MESSAGE,
+        )
+
+    try:
+        await get_alive_iiko_terminal_group_id(access_token, organization.iiko_organization_id)
+    except IikoTerminalError:
+        return build_iiko_availability(
+            organization,
+            orders_available=False,
+            iiko_status="terminal_unavailable",
+            reason="iiko_terminal_unavailable",
+            message=TERMINAL_UNAVAILABLE_MESSAGE,
+        )
+
+    return build_iiko_availability(
+        organization,
+        orders_available=True,
+        iiko_status="connected",
+        reason="iiko_connected",
+        message=ORDERS_AVAILABLE_MESSAGE,
+    )
+
+
+async def request_iiko_json(path: str, access_token: str, *, json_body: dict | None) -> dict:
+    url = f"{settings.iiko_api_base_url.rstrip('/')}{path}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    timeout = httpx.Timeout(settings.iiko_request_timeout_seconds)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(url, headers=headers, json=json_body)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:500]
+        raise IikoTerminalError(f"iiko request failed with HTTP {exc.response.status_code}: {body}") from exc
+    except httpx.HTTPError as exc:
+        raise IikoTerminalError(f"iiko request failed: {exc}") from exc
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise IikoTerminalError("iiko returned a non-JSON response") from exc
+
+    if not isinstance(data, dict):
+        raise IikoTerminalError("iiko returned an invalid response")
+
+    return data
+
+
+async def request_iiko_terminal_groups(access_token: str, iiko_organization_id: str) -> list[str]:
+    data = await request_iiko_json(
+        "/api/1/terminal_groups",
+        access_token,
+        json_body={"organizationIds": [iiko_organization_id]},
+    )
+    terminal_groups = data.get("terminalGroups")
+    if not isinstance(terminal_groups, list):
+        raise IikoTerminalError("iiko terminal groups response does not contain terminalGroups")
+
+    terminal_group_ids: list[str] = []
+    for organization_group in terminal_groups:
+        if not isinstance(organization_group, dict):
+            continue
+        if organization_group.get("organizationId") != iiko_organization_id:
+            continue
+
+        items = organization_group.get("items")
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            terminal_group_id = item.get("id")
+            if isinstance(terminal_group_id, str) and terminal_group_id:
+                terminal_group_ids.append(terminal_group_id)
+
+    if not terminal_group_ids:
+        raise IikoTerminalError("iiko returned no terminal groups")
+
+    return terminal_group_ids
+
+
+async def get_alive_iiko_terminal_group_id(access_token: str, iiko_organization_id: str) -> str:
+    terminal_group_ids = await request_iiko_terminal_groups(access_token, iiko_organization_id)
+    data = await request_iiko_json(
+        "/api/1/terminal_groups/is_alive",
+        access_token,
+        json_body={
+            "organizationIds": [iiko_organization_id],
+            "terminalGroupIds": terminal_group_ids,
+        },
+    )
+    statuses = data.get("isAliveStatus")
+    if not isinstance(statuses, list):
+        raise IikoTerminalError("iiko terminal status response does not contain isAliveStatus")
+
+    for terminal_status in statuses:
+        if not isinstance(terminal_status, dict):
+            continue
+        if terminal_status.get("organizationId") != iiko_organization_id:
+            continue
+        terminal_group_id = terminal_status.get("terminalGroupId")
+        if terminal_status.get("isAlive") is True and isinstance(terminal_group_id, str) and terminal_group_id:
+            return terminal_group_id
+
+    raise IikoTerminalError("iiko terminal is not alive")
 
 
 async def request_iiko_access_token(api_login: str) -> tuple[str, str | None, datetime]:
@@ -199,12 +302,22 @@ async def get_organization_availability_by_slug(db: AsyncSession, slug: str) -> 
     if not organization:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
 
-    return get_iiko_availability(organization)
+    return await get_iiko_availability(db, organization)
 
 
 async def ensure_iiko_orders_available(db: AsyncSession, organization_id: UUID) -> str:
     try:
-        return await get_valid_token(db, organization_id)
+        access_token = await get_valid_token(db, organization_id)
+        organization = await db.get(Organization, organization_id)
+        if not organization or not organization.iiko_organization_id:
+            raise IikoTerminalError("Organization does not have iiko organization id")
+        await get_alive_iiko_terminal_group_id(access_token, organization.iiko_organization_id)
+        return access_token
+    except IikoTerminalError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            TERMINAL_UNAVAILABLE_MESSAGE,
+        )
     except IikoAuthorizationError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

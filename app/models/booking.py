@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import enum
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, IdMixin, TimestampMixin
+
+
+class BookingImageOrientation(str, enum.Enum):
+    horizontal = "horizontal"
+    vertical = "vertical"
 
 
 class BookingCategory(Base, IdMixin, TimestampMixin):
@@ -80,9 +86,17 @@ class BookingImage(Base, IdMixin, TimestampMixin):
         nullable=False,
     )
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    orientation: Mapped[BookingImageOrientation] = mapped_column(
+        String(16),
+        default=BookingImageOrientation.horizontal.value,
+        nullable=False,
+    )
     alt_text: Mapped[str | None] = mapped_column(String(255))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     booking: Mapped[Booking] = relationship(back_populates="images")
 
-    __table_args__ = (Index("ix_booking_images_booking_sort", "booking_id", "sort_order"),)
+    __table_args__ = (
+        Index("ix_booking_images_booking_sort", "booking_id", "sort_order"),
+        CheckConstraint("orientation IN ('horizontal', 'vertical')", name="ck_booking_images_orientation"),
+    )

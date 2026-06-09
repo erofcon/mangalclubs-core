@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import time
+from datetime import datetime, time
 from decimal import Decimal
 import uuid
 
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Numeric, SmallInteger, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,7 @@ class Organization(Base, IdMixin, TimestampMixin):
     latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     photo_url: Mapped[str | None] = mapped_column(String(1024))
+    iiko_api_login: Mapped[str | None] = mapped_column(String(128), unique=True, index=True)
 
     working_hours: Mapped[list[OrganizationWorkingHour]] = relationship(
         back_populates="organization",
@@ -40,6 +41,12 @@ class Organization(Base, IdMixin, TimestampMixin):
         back_populates="organization",
         cascade="all, delete-orphan",
         order_by="Booking.sort_order",
+    )
+    iiko_token: Mapped[IikoToken | None] = relationship(
+        "IikoToken",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
     __table_args__ = (
@@ -81,3 +88,21 @@ class OrganizationWorkingHour(Base):
     @property
     def closes_next_day(self) -> bool:
         return bool(not self.is_closed and self.opens_at and self.closes_at and self.closes_at <= self.opens_at)
+
+
+class IikoToken(Base, IdMixin, TimestampMixin):
+    __tablename__ = "iiko_tokens"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+    )
+    access_token: Mapped[str | None] = mapped_column(Text)
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_authorized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    organization: Mapped[Organization] = relationship(back_populates="iiko_token")

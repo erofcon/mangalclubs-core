@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin
 from app.db.session import get_db
 from app.models.staff import StaffUser
-from app.schemas.organization import OrganizationCreate, OrganizationOut, OrganizationUpdate
+from app.schemas.organization import OrganizationAvailabilityOut, OrganizationCreate, OrganizationOut, OrganizationUpdate
+from app.services.iiko import get_organization_availability_by_slug
 from app.services.organizations import (
     create_organization,
     delete_organization,
@@ -22,6 +23,11 @@ router = APIRouter(prefix="/organizations", tags=["organizations"])
 @router.get("", response_model=list[OrganizationOut])
 async def organizations_list(db: AsyncSession = Depends(get_db)):
     return await list_organizations(db)
+
+
+@router.get("/{slug}/availability", response_model=OrganizationAvailabilityOut)
+async def organizations_availability(slug: str, db: AsyncSession = Depends(get_db)):
+    return await get_organization_availability_by_slug(db, slug)
 
 
 @router.get("/{slug}", response_model=OrganizationOut)

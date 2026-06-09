@@ -11,6 +11,7 @@ from starlette.datastructures import UploadFile
 from app.core.config import settings
 from app.models.organization import Organization, OrganizationWorkingHour
 from app.schemas.organization import OrganizationCreate, OrganizationUpdate
+from app.services.iiko import authorize_organization
 
 
 ALLOWED_PHOTO_CONTENT_TYPES = {
@@ -22,7 +23,7 @@ MAX_PHOTO_SIZE_BYTES = 8 * 1024 * 1024
 
 
 def organization_query():
-    return select(Organization).options(selectinload(Organization.working_hours))
+    return select(Organization).options(selectinload(Organization.working_hours), selectinload(Organization.iiko_token))
 
 
 async def list_organizations(db: AsyncSession) -> list[Organization]:
@@ -60,6 +61,7 @@ async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> 
         latitude=payload.coordinates.latitude,
         longitude=payload.coordinates.longitude,
         photo_url=str(payload.photo_url) if payload.photo_url is not None else None,
+        iiko_api_login=payload.iiko_api_login,
     )
     replace_working_hours(organization, payload.working_hours)
 
@@ -69,6 +71,9 @@ async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> 
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Organization already exists")
+
+    if organization.iiko_api_login:
+        await authorize_organization(db, organization)
 
     return await get_organization_by_id(db, organization.id)
 
@@ -81,7 +86,7 @@ async def update_organization(
     organization = await get_organization_by_id(db, organization_id)
     data = payload.model_dump(exclude_unset=True)
 
-    for field in ("slug", "name", "city", "address", "phone", "intro"):
+    for field in ("slug", "name", "city", "address", "phone", "intro", "iiko_api_login"):
         if field in data:
             setattr(organization, field, data[field])
 
@@ -100,6 +105,13 @@ async def update_organization(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Organization already exists")
+
+    if "iiko_api_login" in data:
+        if organization.iiko_api_login:
+            await authorize_organization(db, organization)
+        elif organization.iiko_token:
+            await db.delete(organization.iiko_token)
+            await db.commit()
 
     return await get_organization_by_id(db, organization.id)
 

@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     media_root: str = "media"
     media_url: str = "/media"
 
+    iiko_api_base_url: str = "https://api-ru.iiko.services"
+    iiko_auth_poll_seconds: int = 60
+    iiko_token_refresh_margin_seconds: int = 120
+    iiko_request_timeout_seconds: float = 10.0
+
     jwt_secret_key: str
     access_token_minutes: int = 15
     refresh_token_days: int = 60

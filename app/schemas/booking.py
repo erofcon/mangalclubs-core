@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
+from app.models.booking import BookingImageOrientation
+
 
 class BookingOrganizationOut(BaseModel):
     id: UUID
@@ -15,6 +17,7 @@ class BookingOrganizationOut(BaseModel):
 
 class BookingImageBase(BaseModel):
     url: HttpUrl | str = Field(max_length=1024)
+    orientation: BookingImageOrientation = BookingImageOrientation.horizontal
     alt_text: str | None = Field(default=None, max_length=255)
     sort_order: int = 0
 
@@ -47,11 +50,10 @@ class BookingCategoryCreate(BaseModel):
     organization_id: UUID
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
-    preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     sort_order: int = 0
     is_active: bool = True
 
-    @field_validator("title", "description", "preview_url", mode="before")
+    @field_validator("title", "description", mode="before")
     @classmethod
     def strip_strings(cls, value: Any) -> Any:
         if value is None:
@@ -66,11 +68,10 @@ class BookingCategoryUpdate(BaseModel):
     organization_id: UUID | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
-    preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     sort_order: int | None = None
     is_active: bool | None = None
 
-    @field_validator("title", "description", "preview_url", mode="before")
+    @field_validator("title", "description", mode="before")
     @classmethod
     def strip_optional_strings(cls, value: Any) -> Any:
         if value is None:
@@ -86,7 +87,6 @@ class BookingCategoryOut(BaseModel):
     organization_id: UUID
     title: str
     description: str | None
-    preview_url: str | None
     sort_order: int
     is_active: bool
     organization: BookingOrganizationOut

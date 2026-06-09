@@ -1,5 +1,6 @@
-from datetime import time
+from datetime import datetime, time
 from decimal import Decimal
+from typing import Literal
 from typing import Any
 from uuid import UUID
 
@@ -57,6 +58,7 @@ class OrganizationBase(BaseModel):
     intro: str = Field(min_length=1)
     coordinates: CoordinatesIn
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
+    iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
     working_hours: list[OrganizationWorkingHourCreate] = Field(min_length=1, max_length=7)
 
     @field_validator("name", "city", "address", "phone", "intro", mode="before")
@@ -64,6 +66,16 @@ class OrganizationBase(BaseModel):
     def strip_required_strings(cls, value: Any) -> Any:
         if isinstance(value, str):
             value = value.strip()
+        return value
+
+    @field_validator("iiko_api_login", mode="before")
+    @classmethod
+    def strip_optional_iiko_api_login(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
         return value
 
     @field_validator("photo_url", mode="before")
@@ -105,6 +117,7 @@ class OrganizationUpdate(BaseModel):
     intro: str | None = Field(default=None, min_length=1)
     coordinates: CoordinatesIn | None = None
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
+    iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
     working_hours: list[OrganizationWorkingHourUpdate] | None = Field(default=None, min_length=1, max_length=7)
 
     @field_validator("slug", mode="before")
@@ -119,6 +132,16 @@ class OrganizationUpdate(BaseModel):
     def strip_optional_strings(cls, value: Any) -> Any:
         if isinstance(value, str):
             value = value.strip()
+        return value
+
+    @field_validator("iiko_api_login", mode="before")
+    @classmethod
+    def strip_update_iiko_api_login(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
         return value
 
     @field_validator("photo_url", mode="before")
@@ -159,3 +182,13 @@ class OrganizationOut(BaseModel):
     working_hours: list[OrganizationWorkingHourOut]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OrganizationAvailabilityOut(BaseModel):
+    organization_id: UUID
+    slug: str
+    orders_available: bool
+    iiko_status: Literal["not_configured", "connected", "refreshing", "unavailable"]
+    reason: Literal["iiko_not_configured", "iiko_connected", "iiko_refreshing", "iiko_unavailable"]
+    message: str
+    checked_at: datetime

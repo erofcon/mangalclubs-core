@@ -7,29 +7,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.datastructures import UploadFile
 
-from app.models.booking import Booking, BookingCategory, BookingImage
+from app.models.booking import Booking, BookingCategory, BookingImage, BookingImageOrientation
 from app.models.organization import Organization
 from app.schemas.booking import BookingCategoryCreate, BookingCategoryUpdate, BookingCreate, BookingUpdate
 from app.services.media import delete_local_media_file, save_media_upload
 
 
-def category_query():
-    return select(BookingCategory).options(selectinload(BookingCategory.organization))
+def category_query(*, include_inactive: bool = False):
+    statement = select(BookingCategory).options(selectinload(BookingCategory.organization))
+    if not include_inactive:
+        statement = statement.where(BookingCategory.is_active.is_(True))
+    return statement
 
 
-def category_with_bookings_query():
-    return select(BookingCategory).options(
+def category_with_bookings_query(*, include_inactive: bool = False):
+    bookings_loader = selectinload(BookingCategory.bookings)
+    if not include_inactive:
+        bookings_loader = selectinload(BookingCategory.bookings.and_(Booking.is_active.is_(True)))
+
+    statement = select(BookingCategory).options(
         selectinload(BookingCategory.organization),
-        selectinload(BookingCategory.bookings).selectinload(Booking.images),
+        bookings_loader.selectinload(Booking.images),
     )
+    if not include_inactive:
+        statement = statement.where(BookingCategory.is_active.is_(True))
+    return statement
 
 
-def booking_query():
-    return select(Booking).options(
+def booking_query(*, include_inactive: bool = False):
+    statement = select(Booking).options(
         selectinload(Booking.organization),
         selectinload(Booking.category).selectinload(BookingCategory.organization),
         selectinload(Booking.images),
     )
+    if not include_inactive:
+        statement = statement.where(Booking.is_active.is_(True)).where(
+            Booking.category.has(BookingCategory.is_active.is_(True))
+        )
+    return statement
 
 
 async def ensure_organization_exists(db: AsyncSession, organization_id: UUID) -> None:
@@ -37,16 +52,26 @@ async def ensure_organization_exists(db: AsyncSession, organization_id: UUID) ->
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
 
 
-async def get_category_by_id(db: AsyncSession, category_id: UUID) -> BookingCategory:
-    category = await db.scalar(category_query().where(BookingCategory.id == category_id))
+async def get_category_by_id(
+    db: AsyncSession,
+    category_id: UUID,
+    *,
+    include_inactive: bool = False,
+) -> BookingCategory:
+    category = await db.scalar(category_query(include_inactive=include_inactive).where(BookingCategory.id == category_id))
     if not category:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking category not found")
 
     return category
 
 
-async def get_booking_by_id(db: AsyncSession, booking_id: UUID) -> Booking:
-    booking = await db.scalar(booking_query().where(Booking.id == booking_id))
+async def get_booking_by_id(
+    db: AsyncSession,
+    booking_id: UUID,
+    *,
+    include_inactive: bool = False,
+) -> Booking:
+    booking = await db.scalar(booking_query(include_inactive=include_inactive).where(Booking.id == booking_id))
     if not booking:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking not found")
 
@@ -77,7 +102,6 @@ async def create_booking_category(db: AsyncSession, payload: BookingCategoryCrea
         organization_id=payload.organization_id,
         title=payload.title,
         description=payload.description,
-        preview_url=str(payload.preview_url) if payload.preview_url is not None else None,
         sort_order=payload.sort_order,
         is_active=payload.is_active,
     )
@@ -89,7 +113,7 @@ async def create_booking_category(db: AsyncSession, payload: BookingCategoryCrea
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Booking category already exists")
 
-    return await get_category_by_id(db, category.id)
+    return await get_category_by_id(db, category.id, include_inactive=True)
 
 
 async def update_booking_category(
@@ -97,7 +121,9 @@ async def update_booking_category(
     category_id: UUID,
     payload: BookingCategoryUpdate,
 ) -> BookingCategory:
-    category = await db.scalar(category_with_bookings_query().where(BookingCategory.id == category_id))
+    category = await db.scalar(
+        category_with_bookings_query(include_inactive=True).where(BookingCategory.id == category_id)
+    )
     if not category:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking category not found")
 
@@ -111,14 +137,9 @@ async def update_booking_category(
                 "Booking category with bookings cannot be moved to another organization",
             )
 
-    old_preview_url = category.preview_url
-
     for field in ("organization_id", "title", "description", "sort_order", "is_active"):
         if field in data:
             setattr(category, field, data[field])
-
-    if "preview_url" in data:
-        category.preview_url = str(payload.preview_url) if payload.preview_url is not None else None
 
     try:
         await db.commit()
@@ -126,14 +147,13 @@ async def update_booking_category(
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Booking category already exists")
 
-    if "preview_url" in data and old_preview_url != category.preview_url:
-        delete_local_media_file(old_preview_url)
-
-    return await get_category_by_id(db, category.id)
+    return await get_category_by_id(db, category.id, include_inactive=True)
 
 
 async def delete_booking_category(db: AsyncSession, category_id: UUID) -> None:
-    category = await db.scalar(category_with_bookings_query().where(BookingCategory.id == category_id))
+    category = await db.scalar(
+        category_with_bookings_query(include_inactive=True).where(BookingCategory.id == category_id)
+    )
     if not category:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking category not found")
 
@@ -154,13 +174,13 @@ async def upload_booking_category_preview(
     category_id: UUID,
     file: UploadFile,
 ) -> BookingCategory:
-    category = await get_category_by_id(db, category_id)
+    category = await get_category_by_id(db, category_id, include_inactive=True)
     old_preview_url = category.preview_url
     category.preview_url = await save_media_upload(file, "booking-categories", str(category.id))
     await db.commit()
 
     delete_local_media_file(old_preview_url)
-    return await get_category_by_id(db, category.id)
+    return await get_category_by_id(db, category.id, include_inactive=True)
 
 
 async def list_bookings(
@@ -206,11 +226,11 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Booking already exists")
 
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpdate) -> Booking:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
     data = payload.model_dump(exclude_unset=True)
 
     next_organization_id = payload.organization_id or booking.organization_id
@@ -244,11 +264,11 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
     for media_url in old_media_urls:
         delete_local_media_file(media_url)
 
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def delete_booking(db: AsyncSession, booking_id: UUID) -> None:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
     media_urls = [booking.preview_url, *(image.url for image in booking.images)]
 
     await db.delete(booking)
@@ -259,57 +279,61 @@ async def delete_booking(db: AsyncSession, booking_id: UUID) -> None:
 
 
 async def upload_booking_preview(db: AsyncSession, booking_id: UUID, file: UploadFile) -> Booking:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
     old_preview_url = booking.preview_url
     booking.preview_url = await save_media_upload(file, "bookings", str(booking.id))
     await db.commit()
 
     delete_local_media_file(old_preview_url)
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def add_booking_image(
     db: AsyncSession,
     booking_id: UUID,
     file: UploadFile,
+    orientation: BookingImageOrientation = BookingImageOrientation.horizontal,
     alt_text: str | None = None,
     sort_order: int = 0,
 ) -> Booking:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
     image = BookingImage(
         booking_id=booking.id,
         url=await save_media_upload(file, "bookings", str(booking.id)),
+        orientation=orientation,
         alt_text=alt_text.strip() if alt_text else None,
         sort_order=sort_order,
     )
     db.add(image)
     await db.commit()
 
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def add_booking_images(
     db: AsyncSession,
     booking_id: UUID,
     files: list[UploadFile],
+    orientation: BookingImageOrientation = BookingImageOrientation.horizontal,
     sort_order: int = 0,
 ) -> Booking:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
 
     for index, file in enumerate(files):
         image = BookingImage(
             booking_id=booking.id,
             url=await save_media_upload(file, "bookings", str(booking.id)),
+            orientation=orientation,
             sort_order=sort_order + index,
         )
         db.add(image)
 
     await db.commit()
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def delete_booking_image(db: AsyncSession, booking_id: UUID, image_id: UUID) -> Booking:
-    booking = await get_booking_by_id(db, booking_id)
+    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
     image = next((item for item in booking.images if item.id == image_id), None)
     if image is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking image not found")
@@ -319,7 +343,7 @@ async def delete_booking_image(db: AsyncSession, booking_id: UUID, image_id: UUI
     await db.commit()
 
     delete_local_media_file(image_url)
-    return await get_booking_by_id(db, booking.id)
+    return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
 async def validate_booking_links(db: AsyncSession, organization_id: UUID, category_id: UUID) -> None:
@@ -338,6 +362,7 @@ def replace_booking_images(booking: Booking, images) -> None:
     booking.images = [
         BookingImage(
             url=str(item.url),
+            orientation=item.orientation,
             alt_text=item.alt_text,
             sort_order=item.sort_order,
         )

@@ -41,12 +41,27 @@ async def menu_get(
 @router.post("/admin/organizations/{organization_id}/sync", response_model=MenuOut)
 async def menu_admin_sync_organization(
     organization_id: UUID,
+    order_type: OrderType = Query(default="pickup", alias="orderType"),
     db: AsyncSession = Depends(get_db),
     _: StaffUser = Depends(get_current_admin),
 ):
     organization = await get_organization_by_id(db, organization_id)
     await sync_iiko_menu_for_organization(db, organization)
-    return await get_organization_menu(db, organization, order_type="pickup")
+    return await get_organization_menu(db, organization, order_type=order_type)
+
+
+@router.get("/admin/organizations/{organization_id}", response_model=MenuOut)
+async def menu_admin_get_organization(
+    organization_id: UUID,
+    order_type: OrderType = Query(default="pickup", alias="orderType"),
+    refresh: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    _: StaffUser = Depends(get_current_admin),
+):
+    organization = await get_organization_by_id(db, organization_id)
+    if refresh:
+        await sync_iiko_menu_for_organization(db, organization)
+    return await get_organization_menu(db, organization, order_type=order_type)
 
 
 @router.get("/admin/items", response_model=list[MenuItemContentOut])

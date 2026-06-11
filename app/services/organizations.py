@@ -207,15 +207,20 @@ def delete_local_media_file(photo_url: str | None) -> None:
 
 
 def replace_working_hours(organization: Organization, working_hours) -> None:
-    organization.working_hours = [
-        OrganizationWorkingHour(
-            weekday=item.weekday,
-            is_closed=item.is_closed,
-            opens_at=item.opens_at,
-            closes_at=item.closes_at,
-        )
-        for item in working_hours
-    ]
+    existing_by_weekday = {item.weekday: item for item in organization.working_hours}
+    next_hours = []
+
+    for item in working_hours:
+        working_hour = existing_by_weekday.get(item.weekday)
+        if working_hour is None:
+            working_hour = OrganizationWorkingHour(weekday=item.weekday)
+
+        working_hour.is_closed = item.is_closed
+        working_hour.opens_at = item.opens_at
+        working_hour.closes_at = item.closes_at
+        next_hours.append(working_hour)
+
+    organization.working_hours = next_hours
 
 
 async def reset_default_delivery(db: AsyncSession, organization_id: UUID) -> None:

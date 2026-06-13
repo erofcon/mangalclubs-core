@@ -12,6 +12,7 @@ from app.services.organizations import (
     create_organization,
     delete_organization,
     get_organization_by_slug,
+    list_iiko_payment_types,
     list_organizations,
     update_organization,
     upload_organization_photo,
@@ -42,6 +43,15 @@ async def organizations_create(
     _: StaffUser = Depends(get_current_admin),
 ):
     return await create_organization(db, payload)
+
+
+@router.get("/admin/{organization_id}/iiko-payment-types")
+async def organizations_iiko_payment_types(
+    organization_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: StaffUser = Depends(get_current_admin),
+):
+    return await list_iiko_payment_types(db, organization_id)
 
 
 @router.patch("/{organization_id}", response_model=OrganizationOut)

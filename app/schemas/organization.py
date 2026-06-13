@@ -60,6 +60,10 @@ class OrganizationBase(BaseModel):
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
     iiko_organization_id: str | None = Field(default=None, min_length=1, max_length=64)
+    iiko_online_payment_type_id: str | None = Field(default=None, min_length=1, max_length=64)
+    iiko_online_payment_type_kind: str = Field(default="Card", min_length=1, max_length=32)
+    tbank_terminal_key: str | None = Field(default=None, min_length=1, max_length=64)
+    tbank_password: str | None = Field(default=None, min_length=1, max_length=255)
     accepts_pickup: bool = True
     accepts_delivery: bool = False
     is_default_delivery: bool = False
@@ -72,7 +76,15 @@ class OrganizationBase(BaseModel):
             value = value.strip()
         return value
 
-    @field_validator("iiko_api_login", "iiko_organization_id", mode="before")
+    @field_validator(
+        "iiko_api_login",
+        "iiko_organization_id",
+        "iiko_online_payment_type_id",
+        "iiko_online_payment_type_kind",
+        "tbank_terminal_key",
+        "tbank_password",
+        mode="before",
+    )
     @classmethod
     def strip_optional_iiko_strings(cls, value: Any) -> Any:
         if value is None:
@@ -129,6 +141,10 @@ class OrganizationUpdate(BaseModel):
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
     iiko_api_login: str | None = Field(default=None, min_length=1, max_length=128)
     iiko_organization_id: str | None = Field(default=None, min_length=1, max_length=64)
+    iiko_online_payment_type_id: str | None = Field(default=None, min_length=1, max_length=64)
+    iiko_online_payment_type_kind: str | None = Field(default=None, min_length=1, max_length=32)
+    tbank_terminal_key: str | None = Field(default=None, min_length=1, max_length=64)
+    tbank_password: str | None = Field(default=None, min_length=1, max_length=255)
     accepts_pickup: bool | None = None
     accepts_delivery: bool | None = None
     is_default_delivery: bool | None = None
@@ -148,7 +164,15 @@ class OrganizationUpdate(BaseModel):
             value = value.strip()
         return value
 
-    @field_validator("iiko_api_login", "iiko_organization_id", mode="before")
+    @field_validator(
+        "iiko_api_login",
+        "iiko_organization_id",
+        "iiko_online_payment_type_id",
+        "iiko_online_payment_type_kind",
+        "tbank_terminal_key",
+        "tbank_password",
+        mode="before",
+    )
     @classmethod
     def strip_update_iiko_strings(cls, value: Any) -> Any:
         if value is None:
@@ -200,6 +224,9 @@ class OrganizationOut(BaseModel):
     coordinates: CoordinatesOut
     photo_url: str | None
     iiko_organization_id: str | None
+    iiko_online_payment_type_id: str | None
+    iiko_online_payment_type_kind: str
+    payment_configured: bool
     accepts_pickup: bool
     accepts_delivery: bool
     is_default_delivery: bool

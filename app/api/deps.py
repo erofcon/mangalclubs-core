@@ -39,6 +39,24 @@ async def get_current_customer(
     return customer
 
 
+async def get_optional_current_customer(
+    creds: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: AsyncSession = Depends(get_db),
+) -> Customer | None:
+    if not creds:
+        return None
+
+    payload = await get_token_payload(creds)
+    if payload.get("subject_type") != "customer":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Customer only")
+
+    customer = await db.get(Customer, UUID(payload["sub"]))
+    if not customer or not customer.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    return customer
+
+
 async def get_current_staff(
     payload: dict = Depends(get_token_payload),
     db: AsyncSession = Depends(get_db),

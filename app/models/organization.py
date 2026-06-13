@@ -25,6 +25,10 @@ class Organization(Base, IdMixin, TimestampMixin):
     photo_url: Mapped[str | None] = mapped_column(String(1024))
     iiko_api_login: Mapped[str | None] = mapped_column(String(128), index=True)
     iiko_organization_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    iiko_online_payment_type_id: Mapped[str | None] = mapped_column(String(64))
+    iiko_online_payment_type_kind: Mapped[str] = mapped_column(String(32), default="Card", nullable=False)
+    tbank_terminal_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    tbank_password: Mapped[str | None] = mapped_column(Text)
     accepts_pickup: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     accepts_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_default_delivery: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -58,6 +62,11 @@ class Organization(Base, IdMixin, TimestampMixin):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    orders: Mapped[list[Order]] = relationship(
+        "Order",
+        back_populates="organization",
+        order_by="Order.created_at.desc()",
+    )
 
     __table_args__ = (
         CheckConstraint("latitude >= -90 AND latitude <= 90", name="ck_organizations_latitude_range"),
@@ -67,6 +76,10 @@ class Organization(Base, IdMixin, TimestampMixin):
     @property
     def coordinates(self) -> dict[str, Decimal]:
         return {"latitude": self.latitude, "longitude": self.longitude}
+
+    @property
+    def payment_configured(self) -> bool:
+        return bool(self.tbank_terminal_key and self.tbank_password)
 
 
 class OrganizationWorkingHour(Base):

@@ -102,6 +102,7 @@ async def create_booking_category(db: AsyncSession, payload: BookingCategoryCrea
         organization_id=payload.organization_id,
         title=payload.title,
         description=payload.description,
+        preview_url=str(payload.preview_url) if payload.preview_url is not None else None,
         sort_order=payload.sort_order,
         is_active=payload.is_active,
     )
@@ -137,9 +138,17 @@ async def update_booking_category(
                 "Booking category with bookings cannot be moved to another organization",
             )
 
+    old_preview_url: str | None = None
+
     for field in ("organization_id", "title", "description", "sort_order", "is_active"):
         if field in data:
             setattr(category, field, data[field])
+
+    if "preview_url" in data:
+        next_preview_url = str(payload.preview_url) if payload.preview_url is not None else None
+        if category.preview_url != next_preview_url:
+            old_preview_url = category.preview_url
+        category.preview_url = next_preview_url
 
     try:
         await db.commit()
@@ -147,6 +156,7 @@ async def update_booking_category(
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Booking category already exists")
 
+    delete_local_media_file(old_preview_url)
     return await get_category_by_id(db, category.id, include_inactive=True)
 
 
@@ -157,9 +167,9 @@ async def delete_booking_category(db: AsyncSession, category_id: UUID) -> None:
     if not category:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking category not found")
 
-    media_urls = []
+    media_urls = [category.preview_url]
     for booking in category.bookings:
-
+        media_urls.append(booking.preview_url)
         media_urls.extend(image.url for image in booking.images)
 
     await db.delete(category)
@@ -176,10 +186,11 @@ async def upload_booking_category_preview(
 ) -> BookingCategory:
     category = await get_category_by_id(db, category_id, include_inactive=True)
 
+    old_preview_url = category.preview_url
     category.preview_url = await save_media_upload(file, "booking-categories", str(category.id))
     await db.commit()
 
-    
+    delete_local_media_file(old_preview_url)
     return await get_category_by_id(db, category.id, include_inactive=True)
 
 
@@ -213,7 +224,7 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
         title=payload.title,
         description=payload.description,
         long_description=payload.long_description,
-
+        preview_url=str(payload.preview_url) if payload.preview_url is not None else None,
         sort_order=payload.sort_order,
         is_active=payload.is_active,
     )
@@ -244,6 +255,12 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
         if field in data:
             setattr(booking, field, data[field])
 
+    if "preview_url" in data:
+        next_preview_url = str(payload.preview_url) if payload.preview_url is not None else None
+        if booking.preview_url != next_preview_url:
+            old_media_urls.append(booking.preview_url)
+        booking.preview_url = next_preview_url
+
     if payload.images is not None:
         new_image_urls = {str(image.url) for image in payload.images}
         old_media_urls.extend(image.url for image in booking.images if image.url not in new_image_urls)
@@ -263,7 +280,7 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
 
 async def delete_booking(db: AsyncSession, booking_id: UUID) -> None:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
-    media_urls = [image.url for image in booking.images]
+    media_urls = [booking.preview_url, *(image.url for image in booking.images)]
 
     await db.delete(booking)
     await db.commit()
@@ -275,10 +292,11 @@ async def delete_booking(db: AsyncSession, booking_id: UUID) -> None:
 async def upload_booking_preview(db: AsyncSession, booking_id: UUID, file: UploadFile) -> Booking:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
 
+    old_preview_url = booking.preview_url
     booking.preview_url = await save_media_upload(file, "bookings", str(booking.id))
     await db.commit()
 
-    
+    delete_local_media_file(old_preview_url)
     return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 

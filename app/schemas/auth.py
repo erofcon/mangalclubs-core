@@ -1,3 +1,4 @@
+from datetime import date
 from uuid import UUID
 from typing import Any
 
@@ -62,7 +63,10 @@ class AuthSubjectOut(BaseModel):
     id: UUID
     subject_type: str
     phone: str | None = None
+    name: str | None = None
     email: str | None = None
+    birthday: date | None = None
+    avatar_url: str | None = Field(default=None, serialization_alias="avatarUrl")
     role: str | None = None
 
 

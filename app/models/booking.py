@@ -25,6 +25,7 @@ class BookingCategory(Base, IdMixin, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    preview_url: Mapped[str | None] = mapped_column(String(1024))
 
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -58,6 +59,7 @@ class Booking(Base, IdMixin, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     long_description: Mapped[str | None] = mapped_column(Text)
+    preview_url: Mapped[str | None] = mapped_column(String(1024))
 
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

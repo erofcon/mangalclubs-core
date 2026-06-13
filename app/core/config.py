@@ -1,3 +1,5 @@
+import json
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -7,12 +9,26 @@ class Settings(BaseSettings):
     database_url: str
     media_root: str = "media"
     media_url: str = "/media"
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     iiko_api_base_url: str = "https://api-ru.iiko.services"
     iiko_auth_poll_seconds: int = 60
     iiko_menu_poll_seconds: int = 300
     iiko_token_refresh_margin_seconds: int = 120
     iiko_request_timeout_seconds: float = 10.0
+    iiko_terminal_timezone: str = "Europe/Moscow"
+    iiko_order_dispatch_poll_seconds: int = 30
+
+    public_api_base_url: str | None = None
+    tbank_api_base_url: str = "https://securepay.tinkoff.ru/v2"
+    tbank_request_timeout_seconds: float = 10.0
+    tbank_state_poll_seconds: int = 60
+    tbank_default_terminal_key: str | None = None
+    tbank_default_password: str | None = None
+    tbank_notification_url: str | None = None
+    tbank_success_url: str | None = None
+    tbank_fail_url: str | None = None
+    tbank_paid_statuses: str = "CONFIRMED"
 
     jwt_secret_key: str
     access_token_minutes: int = 15
@@ -26,6 +42,31 @@ class Settings(BaseSettings):
     cookie_secure: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        value = self.cors_origins.strip()
+        if not value:
+            return []
+
+        if value.startswith("["):
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(origin).strip() for origin in parsed if str(origin).strip()]
+
+        return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+    @property
+    def tbank_paid_status_set(self) -> set[str]:
+        return {status.strip().upper() for status in self.tbank_paid_statuses.split(",") if status.strip()}
+
+    @property
+    def resolved_tbank_notification_url(self) -> str | None:
+        if self.tbank_notification_url:
+            return self.tbank_notification_url.rstrip("/")
+        if self.public_api_base_url:
+            return f"{self.public_api_base_url.rstrip('/')}/api/v1/orders/payments/tbank/webhook"
+        return None
 
 
 settings = Settings()

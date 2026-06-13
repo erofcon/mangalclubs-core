@@ -11,7 +11,7 @@ from starlette.datastructures import UploadFile
 from app.core.config import settings
 from app.models.organization import Organization, OrganizationWorkingHour
 from app.schemas.organization import OrganizationCreate, OrganizationUpdate
-from app.services.iiko import authorize_organization
+from app.services.iiko import IikoAuthorizationError, IikoTerminalError, authorize_organization, get_valid_token, request_iiko_json
 
 
 ALLOWED_PHOTO_CONTENT_TYPES = {
@@ -63,6 +63,10 @@ async def create_organization(db: AsyncSession, payload: OrganizationCreate) -> 
         photo_url=str(payload.photo_url) if payload.photo_url is not None else None,
         iiko_api_login=payload.iiko_api_login,
         iiko_organization_id=payload.iiko_organization_id,
+        iiko_online_payment_type_id=payload.iiko_online_payment_type_id,
+        iiko_online_payment_type_kind=payload.iiko_online_payment_type_kind,
+        tbank_terminal_key=payload.tbank_terminal_key,
+        tbank_password=payload.tbank_password,
         accepts_pickup=payload.accepts_pickup,
         accepts_delivery=payload.accepts_delivery,
         is_default_delivery=payload.is_default_delivery,
@@ -103,11 +107,17 @@ async def update_organization(
         "intro",
         "iiko_api_login",
         "iiko_organization_id",
+        "iiko_online_payment_type_id",
+        "iiko_online_payment_type_kind",
+        "tbank_terminal_key",
+        "tbank_password",
         "accepts_pickup",
         "accepts_delivery",
         "is_default_delivery",
     ):
         if field in data:
+            if field == "iiko_online_payment_type_kind" and data[field] is None:
+                continue
             setattr(organization, field, data[field])
 
     if "coordinates" in data and payload.coordinates is not None:
@@ -181,6 +191,26 @@ async def upload_organization_photo(
     await db.commit()
 
     return await get_organization_by_id(db, organization.id)
+
+
+async def list_iiko_payment_types(db: AsyncSession, organization_id: UUID) -> dict:
+    organization = await get_organization_by_id(db, organization_id)
+    if not organization.iiko_api_login or not organization.iiko_organization_id:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Organization iiko is not configured")
+
+    try:
+        access_token = await get_valid_token(db, organization.id)
+        data = await request_iiko_json(
+            "/api/1/payment_types",
+            access_token,
+            json_body={"organizationIds": [organization.iiko_organization_id]},
+        )
+    except IikoAuthorizationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "iiko authorization is not available") from exc
+    except IikoTerminalError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"iiko payment types request failed: {exc}") from exc
+
+    return data
 
 
 def validate_photo_upload(file: UploadFile) -> str:

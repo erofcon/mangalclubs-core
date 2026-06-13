@@ -48,6 +48,10 @@ def build_subject_out(subject, subject_type: AuthSubjectType) -> AuthSubjectOut:
             id=subject.id,
             subject_type=AuthSubjectType.customer.value,
             phone=subject.phone,
+            name=subject.name,
+            email=subject.email,
+            birthday=subject.birthday,
+            avatar_url=subject.avatar_url,
         )
 
     return AuthSubjectOut(

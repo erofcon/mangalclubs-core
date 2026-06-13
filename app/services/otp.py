@@ -26,7 +26,7 @@ def normalize_phone(raw_phone: str) -> str:
 
 
 def generate_otp_code() -> str:
-    return f"{random.SystemRandom().randint(0, 999999):06d}"
+    return f"{random.SystemRandom().randint(0, 9999):04d}"
 
 
 def hash_otp(phone: str, code: str) -> str:

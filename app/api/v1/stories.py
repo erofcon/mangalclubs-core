@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin
 from app.db.session import get_db
 from app.models.staff import StaffUser
-from app.schemas.story import StoryCreate, StoryOut, StorySlideUpdate, StoryUpdate
+from app.schemas.story import StoryCreate, StoryOut, StoryPublicOut, StorySlideUpdate, StoryUpdate
 from app.services.stories import (
     add_story_slide,
     create_story,
@@ -24,7 +24,7 @@ from app.services.stories import (
 router = APIRouter(prefix="/stories", tags=["stories"])
 
 
-@router.get("", response_model=list[StoryOut])
+@router.get("", response_model=list[StoryPublicOut])
 async def stories_list(db: AsyncSession = Depends(get_db)):
     return await list_stories(db)
 
@@ -47,7 +47,7 @@ async def stories_admin_get(
     return await get_story_by_id(db, story_id, include_inactive=True)
 
 
-@router.get("/{slug}", response_model=StoryOut)
+@router.get("/{slug}", response_model=StoryPublicOut)
 async def stories_get(slug: str, db: AsyncSession = Depends(get_db)):
     return await get_story_by_slug(db, slug)
 

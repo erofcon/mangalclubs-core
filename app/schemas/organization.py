@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
 from typing import Any
@@ -245,6 +245,30 @@ class OrganizationAvailabilityOut(BaseModel):
         "iiko_connected",
         "iiko_unavailable",
         "iiko_terminal_unavailable",
+        "non_working_day",
+        "outside_working_hours",
     ]
     message: str
     checked_at: datetime
+
+
+class OrganizationOrderTimeWindowOut(BaseModel):
+    starts_at: datetime = Field(serialization_alias="startsAt")
+    ends_at: datetime = Field(serialization_alias="endsAt")
+
+
+class OrganizationOrderTimeSlotOut(BaseModel):
+    starts_at: datetime = Field(serialization_alias="startsAt")
+    ends_at: datetime = Field(serialization_alias="endsAt")
+
+
+class OrganizationOrderTimeSlotsOut(BaseModel):
+    organization_id: UUID
+    slug: str
+    date: date
+    timezone: str
+    is_closed: bool = Field(serialization_alias="isClosed")
+    step_minutes: int = Field(serialization_alias="stepMinutes")
+    working_hours: list[OrganizationWorkingHourOut] = Field(serialization_alias="workingHours")
+    windows: list[OrganizationOrderTimeWindowOut]
+    slots: list[OrganizationOrderTimeSlotOut]

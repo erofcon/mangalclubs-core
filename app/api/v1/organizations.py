@@ -1,12 +1,20 @@
+from datetime import date
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
 from app.db.session import get_db
 from app.models.staff import StaffUser
-from app.schemas.organization import OrganizationAvailabilityOut, OrganizationCreate, OrganizationOut, OrganizationUpdate
+from app.schemas.organization import (
+    OrganizationAvailabilityOut,
+    OrganizationCreate,
+    OrganizationOrderTimeSlotsOut,
+    OrganizationOut,
+    OrganizationUpdate,
+)
+from app.services.availability import get_organization_order_time_slots
 from app.services.iiko import get_organization_availability_by_slug
 from app.services.organizations import (
     create_organization,
@@ -29,6 +37,21 @@ async def organizations_list(db: AsyncSession = Depends(get_db)):
 @router.get("/{slug}/availability", response_model=OrganizationAvailabilityOut)
 async def organizations_availability(slug: str, db: AsyncSession = Depends(get_db)):
     return await get_organization_availability_by_slug(db, slug)
+
+
+@router.get("/{slug}/order-time-slots", response_model=OrganizationOrderTimeSlotsOut)
+async def organizations_order_time_slots(
+    slug: str,
+    target_date: date | None = Query(default=None, alias="date"),
+    step_minutes: int = Query(default=30, ge=5, le=240, alias="stepMinutes"),
+    db: AsyncSession = Depends(get_db),
+):
+    organization = await get_organization_by_slug(db, slug)
+    return get_organization_order_time_slots(
+        organization,
+        target_date=target_date,
+        step_minutes=step_minutes,
+    )
 
 
 @router.get("/{slug}", response_model=OrganizationOut)

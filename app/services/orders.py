@@ -20,6 +20,7 @@ from app.models.customer import Customer
 from app.models.order import Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
 from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind
+from app.services.availability import ensure_organization_accepts_orders_now
 from app.services.iiko import (
     IikoAuthorizationError,
     IikoTerminalError,
@@ -615,7 +616,10 @@ async def run_tbank_payment_state_poller(stop_event: asyncio.Event) -> None:
 
 
 async def resolve_order_organization(db: AsyncSession, payload: OrderCreateIn) -> Organization:
-    statement = select(Organization).options(selectinload(Organization.iiko_menu_snapshot))
+    statement = select(Organization).options(
+        selectinload(Organization.iiko_menu_snapshot),
+        selectinload(Organization.working_hours),
+    )
 
     if payload.order_type == "pickup":
         if payload.organization_id is not None:
@@ -629,6 +633,7 @@ async def resolve_order_organization(db: AsyncSession, payload: OrderCreateIn) -
         if not organization.accepts_pickup:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Organization does not accept pickup orders")
         ensure_order_organization_configured(organization)
+        ensure_organization_accepts_orders_now(organization)
         return organization
 
     organization = await db.scalar(
@@ -641,6 +646,7 @@ async def resolve_order_organization(db: AsyncSession, payload: OrderCreateIn) -
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Default delivery organization is not configured")
 
     ensure_order_organization_configured(organization)
+    ensure_organization_accepts_orders_now(organization)
     return organization
 
 

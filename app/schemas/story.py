@@ -81,6 +81,18 @@ class StorySlideOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StorySlidePublicOut(BaseModel):
+    id: UUID
+    url: str = Field(validation_alias=AliasChoices("url", "src"), serialization_alias="src")
+    media_type: StorySlideMediaType = Field(serialization_alias="type")
+    title: str | None
+    caption: str | None
+    duration_seconds: int | None
+    sort_order: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class StoryCreate(BaseModel):
     slug: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     title: str = Field(min_length=1, max_length=255)
@@ -157,5 +169,20 @@ class StoryOut(BaseModel):
     slides: list[StorySlideOut]
     sort_order: int
     is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StoryPublicOut(BaseModel):
+    id: UUID
+    slug: str
+    title: str
+    preview_url: str | None = Field(
+        validation_alias=AliasChoices("preview_url", "previewImage"),
+        serialization_alias="previewImage",
+    )
+    description: str | None
+    slides: list[StorySlidePublicOut]
+    sort_order: int
 
     model_config = ConfigDict(from_attributes=True)

@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.base import utcnow
 from app.models.organization import IikoToken, Organization
+from app.services.availability import get_organization_orders_availability
 
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,16 @@ async def get_iiko_availability(db: AsyncSession, organization: Organization) ->
             iiko_status="terminal_unavailable",
             reason="iiko_terminal_unavailable",
             message=TERMINAL_UNAVAILABLE_MESSAGE,
+        )
+
+    working_hours_availability = get_organization_orders_availability(organization)
+    if not working_hours_availability["orders_available"]:
+        return build_iiko_availability(
+            organization,
+            orders_available=False,
+            iiko_status="connected",
+            reason=working_hours_availability["reason"],
+            message=working_hours_availability["message"],
         )
 
     return build_iiko_availability(
@@ -297,7 +308,9 @@ async def get_valid_token(db: AsyncSession, organization_id: UUID) -> str:
 
 async def get_organization_availability_by_slug(db: AsyncSession, slug: str) -> dict:
     organization = await db.scalar(
-        select(Organization).options(selectinload(Organization.iiko_token)).where(Organization.slug == slug)
+        select(Organization)
+        .options(selectinload(Organization.iiko_token), selectinload(Organization.working_hours))
+        .where(Organization.slug == slug)
     )
     if not organization:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from starlette.datastructures import UploadFile
 
 from app.core.config import settings
+from app.models.order import Order
 from app.models.organization import Organization, OrganizationWorkingHour
 from app.schemas.organization import OrganizationCreate, OrganizationUpdate
 from app.services.iiko import IikoAuthorizationError, IikoTerminalError, authorize_organization, get_valid_token, request_iiko_json
@@ -153,9 +154,25 @@ async def update_organization(
 
 async def delete_organization(db: AsyncSession, organization_id: UUID) -> None:
     organization = await get_organization_by_id(db, organization_id)
-    delete_local_media_file(organization.photo_url)
+    has_orders = await db.scalar(select(Order.id).where(Order.organization_id == organization.id).limit(1))
+    if has_orders:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Organization cannot be deleted because it has orders",
+        )
+
+    photo_url = organization.photo_url
     await db.delete(organization)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Organization cannot be deleted because it is used by related records",
+        ) from exc
+
+    delete_local_media_file(photo_url)
 
 
 async def upload_organization_photo(

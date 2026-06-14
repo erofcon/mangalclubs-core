@@ -66,6 +66,7 @@ class Organization(Base, IdMixin, TimestampMixin):
         "Order",
         back_populates="organization",
         order_by="Order.created_at.desc()",
+        passive_deletes=True,
     )
 
     __table_args__ = (

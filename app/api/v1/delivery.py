@@ -6,11 +6,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_admin
 from app.db.session import get_db
 from app.models.staff import StaffUser
-from app.schemas.delivery import DeliveryZoneCreate, DeliveryZoneOut, DeliveryZoneUpdate
+from app.schemas.delivery import (
+    DeliveryCalculationOut,
+    DeliveryCheckIn,
+    DeliverySettingsOut,
+    DeliveryZoneCreate,
+    DeliveryZoneOut,
+    DeliveryZoneUpdate,
+)
 from app.services.delivery import (
+    check_delivery,
     create_delivery_zone,
     delete_delivery_zone,
     get_delivery_zone_by_id,
+    get_delivery_settings,
     list_delivery_zones,
     update_delivery_zone,
 )
@@ -23,6 +32,21 @@ async def delivery_zones_list(
     db: AsyncSession = Depends(get_db),
 ):
     return await list_delivery_zones(db)
+
+
+@router.get("/settings", response_model=DeliverySettingsOut)
+async def delivery_settings(
+    db: AsyncSession = Depends(get_db),
+):
+    return await get_delivery_settings(db)
+
+
+@router.post("/check", response_model=DeliveryCalculationOut)
+async def delivery_check(
+    payload: DeliveryCheckIn,
+    db: AsyncSession = Depends(get_db),
+):
+    return await check_delivery(db, payload)
 
 
 @router.get("/admin", response_model=list[DeliveryZoneOut])

@@ -21,6 +21,7 @@ from app.models.order import Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
 from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind
 from app.services.availability import ensure_organization_accepts_orders_now
+from app.services.delivery import ensure_delivery_available_for_coordinates
 from app.services.iiko import (
     IikoAuthorizationError,
     IikoTerminalError,
@@ -60,13 +61,19 @@ async def create_order_payment(
 ) -> dict[str, Any]:
     order_phone = resolve_order_phone(payload, customer)
     organization = await resolve_order_organization(db, payload)
+    delivery_calculation = await resolve_delivery_calculation(db, organization, payload)
     access_token = await get_order_access_token(db, organization)
     terminal_group_id = await get_order_terminal_group_id(access_token, organization)
     order_type = await get_iiko_order_type(access_token, organization, payload.order_type)
     credentials = get_tbank_credentials(organization)
     notification_url = resolve_tbank_notification_url()
-    order_body = build_iiko_order_body(organization, payload, order_type["id"], order_phone=order_phone)
-    amount_kopecks = calculate_order_amount_kopecks(order_body)
+    order_body = build_iiko_order_body(
+        organization,
+        payload,
+        order_type["id"],
+        order_phone=order_phone,
+    )
+    amount_kopecks = calculate_order_amount_kopecks(order_body, delivery_calculation=delivery_calculation)
     local_order = await create_local_order(
         db,
         organization=organization,
@@ -77,6 +84,7 @@ async def create_order_payment(
         order_type=order_type,
         order_body=order_body,
         amount_kopecks=amount_kopecks,
+        delivery_calculation=delivery_calculation,
     )
 
     payment = TBankPayment(
@@ -149,6 +157,7 @@ async def create_order_payment(
         "iiko_order_service_type": order_type["orderServiceType"],
         "payment_status": local_order.payment_status,
         "total_sum": amount_kopecks / 100,
+        "delivery": serialize_delivery_calculation(delivery_calculation),
         "payment": {
             "id": payment.id,
             "status": payment.status,
@@ -650,6 +659,25 @@ async def resolve_order_organization(db: AsyncSession, payload: OrderCreateIn) -
     return organization
 
 
+async def resolve_delivery_calculation(
+    db: AsyncSession,
+    organization: Organization,
+    payload: OrderCreateIn,
+) -> dict[str, Any] | None:
+    if payload.order_type != "delivery":
+        return None
+    if payload.delivery_point is None or payload.delivery_point.coordinates is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "deliveryPoint.coordinates is required for delivery")
+
+    coordinates = payload.delivery_point.coordinates
+    return await ensure_delivery_available_for_coordinates(
+        db,
+        organization=organization,
+        latitude=coordinates.latitude,
+        longitude=coordinates.longitude,
+    )
+
+
 async def create_local_order(
     db: AsyncSession,
     *,
@@ -661,6 +689,7 @@ async def create_local_order(
     order_type: dict[str, str],
     order_body: dict[str, Any],
     amount_kopecks: int,
+    delivery_calculation: dict[str, Any] | None = None,
 ) -> Order:
     order = Order(
         organization_id=organization.id,
@@ -675,7 +704,7 @@ async def create_local_order(
         comment=payload.comment,
         complete_before=payload.complete_before,
         guests_count=payload.guests_count,
-        delivery_point=payload.delivery_point.model_dump(by_alias=True) if payload.delivery_point else None,
+        delivery_point=build_local_delivery_point(payload, delivery_calculation),
         items=[item.model_dump(by_alias=True) for item in payload.items],
         iiko_order_payload=order_body,
         payment_status="payment_pending",
@@ -695,6 +724,40 @@ async def create_local_order(
     await db.commit()
     await db.refresh(order)
     return order
+
+
+def build_local_delivery_point(
+    payload: OrderCreateIn,
+    delivery_calculation: dict[str, Any] | None,
+) -> dict | None:
+    if payload.delivery_point is None:
+        return None
+
+    delivery_point = payload.delivery_point.model_dump(by_alias=True)
+    if delivery_calculation is not None:
+        delivery_point["deliveryCalculation"] = serialize_delivery_calculation(delivery_calculation)
+    return delivery_point
+
+
+def serialize_delivery_calculation(delivery_calculation: dict[str, Any] | None) -> dict[str, Any] | None:
+    if delivery_calculation is None:
+        return None
+
+    zone = delivery_calculation.get("zone")
+    return {
+        "available": delivery_calculation["available"],
+        "reason": delivery_calculation["reason"],
+        "distanceKm": delivery_calculation["distance_km"],
+        "price": delivery_calculation["price"],
+        "zone": {
+            "id": str(zone.id),
+            "distanceFromKm": float(zone.distance_from_km),
+            "distanceToKm": float(zone.distance_to_km) if zone.distance_to_km is not None else None,
+            "price": zone.price,
+        }
+        if zone is not None
+        else None,
+    }
 
 
 async def resolve_local_status_order(db: AsyncSession, order_id: str, *, customer: Customer | None = None) -> Order | None:
@@ -892,7 +955,11 @@ def build_iiko_online_payment(organization: Organization, amount_kopecks: int) -
     }
 
 
-def calculate_order_amount_kopecks(order_body: dict[str, Any]) -> int:
+def calculate_order_amount_kopecks(
+    order_body: dict[str, Any],
+    *,
+    delivery_calculation: dict[str, Any] | None = None,
+) -> int:
     total = Decimal("0")
     items = order_body.get("items")
     if not isinstance(items, list) or not items:
@@ -918,6 +985,9 @@ def calculate_order_amount_kopecks(order_body: dict[str, Any]) -> int:
 
     if total <= 0:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Order total must be greater than zero")
+
+    if delivery_calculation is not None:
+        total += decimal_from_value(delivery_calculation.get("price"), "delivery price")
 
     return int((total * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 

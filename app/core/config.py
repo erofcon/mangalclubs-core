@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     tbank_success_url: str | None = None
     tbank_fail_url: str | None = None
     tbank_paid_statuses: str = "CONFIRMED"
+    delivery_area_geojson: str | None = None
 
     jwt_secret_key: str
     access_token_minutes: int = 15

@@ -245,6 +245,7 @@ class OrderCreateOut(BaseModel):
     iiko_order_service_type: str | None = Field(default=None, serialization_alias="iikoOrderServiceType")
     payment_status: str = Field(serialization_alias="paymentStatus")
     total_sum: float = Field(serialization_alias="totalSum")
+    delivery: dict[str, Any] | None = None
     payment: PaymentInitOut
 
 

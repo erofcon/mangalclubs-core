@@ -70,7 +70,7 @@ async def orders_my_history(
 
 @router.get("/me/{local_order_id}/status", response_model=OrderStatusOut)
 async def orders_my_status(
-    local_order_id: UUID,
+    local_order_id: str,
     db: AsyncSession = Depends(get_db),
     customer: Customer = Depends(get_current_customer),
 ):
@@ -81,6 +81,15 @@ async def orders_my_status(
         organization_slug=None,
         customer=customer,
     )
+
+
+@router.get("/admin/by-number/{public_number}", response_model=OrderStoredOut)
+async def orders_admin_get_by_number(
+    public_number: str,
+    db: AsyncSession = Depends(get_db),
+    _: StaffUser = Depends(get_current_admin),
+):
+    return await get_stored_order(db, public_number)
 
 
 @router.get("/admin", response_model=list[OrderStoredOut])
@@ -100,6 +109,16 @@ async def orders_admin_get(
     _: StaffUser = Depends(get_current_admin),
 ):
     return await get_stored_order(db, local_order_id)
+
+
+@router.get("/admin/by-number/{public_number}/payment-events", response_model=list[PaymentEventOut])
+async def orders_admin_payment_events_by_number(
+    public_number: str,
+    db: AsyncSession = Depends(get_db),
+    _: StaffUser = Depends(get_current_admin),
+):
+    order = await get_stored_order(db, public_number)
+    return await list_order_payment_events(db, order.id)
 
 
 @router.get("/admin/{local_order_id}/payment-events", response_model=list[PaymentEventOut])

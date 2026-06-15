@@ -245,6 +245,7 @@ class CustomerOrderPaymentOut(BaseModel):
 
 class OrderCreateOut(BaseModel):
     id: UUID
+    public_number: str = Field(serialization_alias="publicNumber")
     customer_id: UUID | None = Field(default=None, serialization_alias="customerId")
     organization_id: UUID = Field(serialization_alias="organizationId")
     organization_slug: str = Field(serialization_alias="organizationSlug")
@@ -261,6 +262,7 @@ class OrderCreateOut(BaseModel):
 
 class OrderStatusOut(BaseModel):
     id: UUID | None = None
+    public_number: str | None = Field(default=None, serialization_alias="publicNumber")
     correlation_id: str | None = Field(default=None, serialization_alias="correlationId")
     organization_id: UUID = Field(serialization_alias="organizationId")
     organization_slug: str = Field(serialization_alias="organizationSlug")
@@ -282,6 +284,7 @@ class OrderStatusOut(BaseModel):
 
 class OrderStoredOut(BaseModel):
     id: UUID
+    public_number: str = Field(serialization_alias="publicNumber")
     customer_id: UUID | None = Field(default=None, serialization_alias="customerId")
     organization_id: UUID = Field(serialization_alias="organizationId")
     organization_slug: str = Field(serialization_alias="organizationSlug")
@@ -319,6 +322,7 @@ class OrderStoredOut(BaseModel):
 
 class CustomerOrderOut(BaseModel):
     id: UUID
+    public_number: str = Field(serialization_alias="publicNumber")
     organization_id: UUID = Field(serialization_alias="organizationId")
     organization_slug: str = Field(serialization_alias="organizationSlug")
     order_type: OrderKind = Field(serialization_alias="orderType")

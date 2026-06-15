@@ -9,7 +9,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,6 +56,8 @@ FINAL_PAYMENT_STATUSES = {"paid", "payment_failed", "payment_cancelled", "paymen
 ACTIVE_PAYMENT_STATUSES = {"payment_pending", "payment_form_created"}
 ARCHIVED_PAYMENT_STATUSES = {"payment_failed", "payment_cancelled", "payment_expired"}
 MIN_TBANK_REDIRECT_DUE_SECONDS = 60
+PUBLIC_ORDER_NUMBER_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+PUBLIC_ORDER_NUMBER_MIN_LENGTH = 6
 
 
 async def create_order_payment(
@@ -118,7 +120,7 @@ async def create_order_payment(
             credentials=credentials,
             amount_kopecks=amount_kopecks,
             bank_order_id=str(local_order.id),
-            description=f"Order {local_order.id}",
+            description=f"Order {local_order.public_number}",
             customer_key=str(customer.id) if customer is not None else None,
             notification_url=notification_url,
             success_url=payload.success_url or settings.tbank_success_url,
@@ -126,6 +128,7 @@ async def create_order_payment(
             redirect_due_date=redirect_due_date,
             data={
                 "localOrderId": str(local_order.id),
+                "publicOrderNumber": local_order.public_number,
                 "organizationId": str(organization.id),
                 "organizationSlug": organization.slug,
             },
@@ -154,6 +157,7 @@ async def create_order_payment(
 
     return {
         "id": local_order.id,
+        "public_number": local_order.public_number,
         "customer_id": local_order.customer_id,
         "organization_id": organization.id,
         "organization_slug": organization.slug,
@@ -235,6 +239,7 @@ async def get_iiko_order_status(
 
     return {
         "id": local_order.id if local_order is not None else None,
+        "public_number": local_order.public_number if local_order is not None else None,
         "correlation_id": data.get("correlationId"),
         "organization_id": organization.id,
         "organization_slug": organization.slug,
@@ -313,11 +318,13 @@ async def list_customer_order_history(db: AsyncSession, customer: Customer, *, l
 
 
 async def get_stored_order(db: AsyncSession, order_id) -> Order:
-    order = await db.scalar(
-        select(Order)
-        .options(selectinload(Order.organization))
-        .where(Order.id == order_id)
-    )
+    statement = select(Order).options(selectinload(Order.organization))
+    if isinstance(order_id, UUID):
+        statement = statement.where(Order.id == order_id)
+    else:
+        statement = statement.where(Order.public_number == normalize_public_order_number(order_id))
+
+    order = await db.scalar(statement)
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
 
@@ -359,6 +366,7 @@ def serialize_customer_order(
 ) -> dict[str, Any]:
     return {
         "id": order.id,
+        "public_number": order.public_number,
         "organization_id": order.organization_id,
         "organization_slug": order.organization_slug,
         "order_type": order.order_type,
@@ -972,7 +980,9 @@ async def create_local_order(
     amount_kopecks: int,
     delivery_calculation: dict[str, Any] | None = None,
 ) -> Order:
+    public_number = await generate_public_order_number(db)
     order = Order(
+        public_number=public_number,
         organization_id=organization.id,
         customer_id=customer.id if customer is not None else None,
         organization_slug=organization.slug,
@@ -997,7 +1007,7 @@ async def create_local_order(
     await db.flush()
     iiko_order_payload = {
         **order_body,
-        "externalNumber": str(order.id),
+        "externalNumber": order.public_number,
     }
     if organization.iiko_online_payment_type_id:
         iiko_order_payload["payments"] = [build_iiko_online_payment(organization, amount_kopecks)]
@@ -1005,6 +1015,28 @@ async def create_local_order(
     await db.commit()
     await db.refresh(order)
     return order
+
+
+async def generate_public_order_number(db: AsyncSession) -> str:
+    next_number = await db.scalar(text("SELECT nextval('order_public_number_seq')"))
+    return encode_public_order_number(int(next_number))
+
+
+def encode_public_order_number(value: int) -> str:
+    if value < 1:
+        raise ValueError("Public order number value must be positive")
+
+    base = len(PUBLIC_ORDER_NUMBER_ALPHABET)
+    encoded = ""
+    while value:
+        value, remainder = divmod(value, base)
+        encoded = PUBLIC_ORDER_NUMBER_ALPHABET[remainder] + encoded
+
+    return encoded.rjust(PUBLIC_ORDER_NUMBER_MIN_LENGTH, "0")
+
+
+def normalize_public_order_number(value: Any) -> str:
+    return str(value).strip().upper().replace("-", "").replace(" ", "")
 
 
 def build_local_delivery_point(
@@ -1045,13 +1077,16 @@ async def resolve_local_status_order(db: AsyncSession, order_id: str, *, custome
     try:
         parsed_order_id = UUID(order_id)
     except ValueError:
-        return None
+        parsed_order_id = None
 
     statement = (
         select(Order)
         .options(selectinload(Order.organization))
-        .where(Order.id == parsed_order_id)
     )
+    if parsed_order_id is None:
+        statement = statement.where(Order.public_number == normalize_public_order_number(order_id))
+    else:
+        statement = statement.where(Order.id == parsed_order_id)
     if customer is not None:
         statement = statement.where(Order.customer_id == customer.id)
 
@@ -1183,6 +1218,7 @@ async def get_iiko_order_type(access_token: str, organization: Organization, ord
 def build_local_order_status(local_order: Order) -> dict[str, Any]:
     return {
         "id": local_order.id,
+        "public_number": local_order.public_number,
         "correlation_id": local_order.iiko_correlation_id,
         "organization_id": local_order.organization_id,
         "organization_slug": local_order.organization_slug,

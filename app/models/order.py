@@ -13,6 +13,7 @@ from app.models.base import Base, IdMixin, TimestampMixin
 class Order(Base, IdMixin, TimestampMixin):
     __tablename__ = "orders"
 
+    public_number: Mapped[str] = mapped_column(String(32), unique=True, nullable=False, index=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="RESTRICT"),

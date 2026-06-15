@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID
@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models.base import utcnow
 from app.models.customer import Customer
+from app.models.menu import MenuItemContent
 from app.models.order import Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
 from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind
@@ -52,6 +53,9 @@ FINAL_ORDER_STATUSES = {"Delivered", "Closed", "Cancelled"}
 PAID_IIKO_RETRY_STATUSES = {"PaymentConfirmed", "IikoCreateFailed", "IikoCreateInProgress"}
 IIKO_DISPATCH_IN_PROGRESS_TIMEOUT_SECONDS = 300
 FINAL_PAYMENT_STATUSES = {"paid", "payment_failed", "payment_cancelled", "payment_expired"}
+ACTIVE_PAYMENT_STATUSES = {"payment_pending", "payment_form_created"}
+ARCHIVED_PAYMENT_STATUSES = {"payment_failed", "payment_cancelled", "payment_expired"}
+MIN_TBANK_REDIRECT_DUE_SECONDS = 60
 
 
 async def create_order_payment(
@@ -74,6 +78,7 @@ async def create_order_payment(
         order_phone=order_phone,
     )
     amount_kopecks = calculate_order_amount_kopecks(order_body, delivery_calculation=delivery_calculation)
+    redirect_due_date = resolve_payment_redirect_due_date(payload.complete_before)
     local_order = await create_local_order(
         db,
         organization=organization,
@@ -101,6 +106,7 @@ async def create_order_payment(
             "NotificationURL": notification_url,
             "SuccessURL": payload.success_url or settings.tbank_success_url,
             "FailURL": payload.fail_url or settings.tbank_fail_url,
+            "RedirectDueDate": redirect_due_date,
         },
     )
     db.add(payment)
@@ -117,6 +123,7 @@ async def create_order_payment(
             notification_url=notification_url,
             success_url=payload.success_url or settings.tbank_success_url,
             fail_url=payload.fail_url or settings.tbank_fail_url,
+            redirect_due_date=redirect_due_date,
             data={
                 "localOrderId": str(local_order.id),
                 "organizationId": str(organization.id),
@@ -259,31 +266,42 @@ async def list_stored_orders(db: AsyncSession, *, limit: int, offset: int) -> li
     return list(result)
 
 
-async def list_customer_current_orders(db: AsyncSession, customer: Customer, *, limit: int, offset: int) -> list[Order]:
+async def list_customer_current_orders(db: AsyncSession, customer: Customer, *, limit: int, offset: int) -> list[dict[str, Any]]:
+    await expire_customer_overdue_unpaid_orders(db, customer)
+
     result = await db.scalars(
         select(Order)
-        .options(selectinload(Order.organization))
+        .options(
+            selectinload(Order.organization).selectinload(Organization.iiko_menu_snapshot),
+            selectinload(Order.payments),
+        )
         .where(
             Order.customer_id == customer.id,
             Order.creation_status != "Error",
+            Order.payment_status.not_in(ARCHIVED_PAYMENT_STATUSES),
             or_(Order.order_status.is_(None), Order.order_status.not_in(FINAL_ORDER_STATUSES)),
         )
         .order_by(Order.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
-    return list(result)
+    return await serialize_customer_orders(db, list(result))
 
 
-async def list_customer_order_history(db: AsyncSession, customer: Customer, *, limit: int, offset: int) -> list[Order]:
+async def list_customer_order_history(db: AsyncSession, customer: Customer, *, limit: int, offset: int) -> list[dict[str, Any]]:
+    await expire_customer_overdue_unpaid_orders(db, customer)
+
     result = await db.scalars(
         select(Order)
-        .options(selectinload(Order.organization))
+        .options(
+            selectinload(Order.organization).selectinload(Organization.iiko_menu_snapshot),
+            selectinload(Order.payments),
+        )
         .where(
             Order.customer_id == customer.id,
             or_(
                 Order.creation_status == "Error",
-                Order.payment_status.in_(("payment_failed", "payment_cancelled", "payment_expired")),
+                Order.payment_status.in_(ARCHIVED_PAYMENT_STATUSES),
                 Order.order_status.in_(FINAL_ORDER_STATUSES),
             ),
         )
@@ -291,7 +309,7 @@ async def list_customer_order_history(db: AsyncSession, customer: Customer, *, l
         .offset(offset)
         .limit(limit)
     )
-    return list(result)
+    return await serialize_customer_orders(db, list(result))
 
 
 async def get_stored_order(db: AsyncSession, order_id) -> Order:
@@ -304,6 +322,190 @@ async def get_stored_order(db: AsyncSession, order_id) -> Order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
 
     return order
+
+
+async def serialize_customer_orders(db: AsyncSession, orders: list[Order]) -> list[dict[str, Any]]:
+    if not orders:
+        return []
+
+    contents = await list_active_menu_item_contents(db)
+    iiko_item_content = {content.iiko_item_id: content for content in contents if content.iiko_item_id}
+    sku_content = {content.sku: content for content in contents if content.sku}
+
+    return [
+        serialize_customer_order(
+            order,
+            iiko_item_content=iiko_item_content,
+            sku_content=sku_content,
+        )
+        for order in orders
+    ]
+
+
+async def list_active_menu_item_contents(db: AsyncSession) -> list[MenuItemContent]:
+    result = await db.scalars(
+        select(MenuItemContent)
+        .where(MenuItemContent.is_active.is_(True))
+        .order_by(MenuItemContent.sort_order, MenuItemContent.created_at)
+    )
+    return list(result)
+
+
+def serialize_customer_order(
+    order: Order,
+    *,
+    iiko_item_content: dict[str, MenuItemContent],
+    sku_content: dict[str, MenuItemContent],
+) -> dict[str, Any]:
+    return {
+        "id": order.id,
+        "organization_id": order.organization_id,
+        "organization_slug": order.organization_slug,
+        "order_type": order.order_type,
+        "phone": order.phone,
+        "comment": order.comment,
+        "complete_before": order.complete_before,
+        "guests_count": order.guests_count,
+        "delivery_point": order.delivery_point,
+        "items": enrich_order_items(
+            order,
+            iiko_item_content=iiko_item_content,
+            sku_content=sku_content,
+        ),
+        "payment_status": order.payment_status,
+        "payment_amount_kopecks": order.payment_amount_kopecks,
+        "payment": serialize_customer_order_payment(order),
+        "iiko_order_id": order.iiko_order_id,
+        "iiko_external_number": order.iiko_external_number,
+        "creation_status": order.creation_status,
+        "order_status": order.order_status,
+        "notification_event": order.notification_event,
+        "total_sum": float(order.total_sum) if order.total_sum is not None else None,
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+    }
+
+
+def serialize_customer_order_payment(order: Order) -> dict[str, Any] | None:
+    if order.payment_status not in ACTIVE_PAYMENT_STATUSES:
+        return None
+
+    payment = next((item for item in order.payments if item.is_active and item.payment_url), None)
+    if payment is None:
+        return None
+
+    return {
+        "id": payment.id,
+        "status": payment.status,
+        "amount": payment.amount_kopecks / 100,
+        "amount_kopecks": payment.amount_kopecks,
+        "bank_order_id": payment.bank_order_id,
+        "bank_payment_id": payment.bank_payment_id,
+        "payment_url": payment.payment_url,
+    }
+
+
+def enrich_order_items(
+    order: Order,
+    *,
+    iiko_item_content: dict[str, MenuItemContent],
+    sku_content: dict[str, MenuItemContent],
+) -> list[Any]:
+    items = order.items if isinstance(order.items, list) else []
+    organization = order.organization
+    snapshot = organization.iiko_menu_snapshot if organization else None
+    raw_menu = snapshot.raw_menu if snapshot and isinstance(snapshot.raw_menu, dict) else None
+    menu_items = build_order_menu_item_index(raw_menu, order.iiko_organization_id)
+
+    return [
+        enrich_order_item(
+            item,
+            menu_items,
+            iiko_item_content=iiko_item_content,
+            sku_content=sku_content,
+        )
+        for item in items
+    ]
+
+
+def enrich_order_item(
+    item: Any,
+    menu_items: dict[tuple[str, str | None], dict[str, Any]],
+    *,
+    iiko_item_content: dict[str, MenuItemContent],
+    sku_content: dict[str, MenuItemContent],
+) -> Any:
+    if not isinstance(item, dict):
+        return item
+
+    product_id = optional_str(item.get("productId") or item.get("product_id"))
+    product_size_id = optional_str(item.get("productSizeId") or item.get("product_size_id"))
+    enriched = dict(item)
+    menu_item = find_order_menu_item(menu_items, product_id, product_size_id)
+
+    sku = optional_str(menu_item.get("sku")) if menu_item else None
+    content = iiko_item_content.get(product_id) if product_id else None
+    if content is None and sku:
+        content = sku_content.get(sku)
+
+    name = content.name_override if content and content.name_override else None
+    image = content.image_url if content and content.image_url else None
+    if menu_item is not None:
+        name = name or optional_str(menu_item.get("name"))
+        image = image or optional_str(menu_item.get("image"))
+        enriched.setdefault("sku", sku)
+        enriched.setdefault("sizeName", menu_item.get("sizeName"))
+
+    enriched["name"] = name
+    enriched["image"] = image
+    return enriched
+
+
+def build_order_menu_item_index(raw_menu: dict[str, Any] | None, iiko_organization_id: str) -> dict[tuple[str, str | None], dict[str, Any]]:
+    if not raw_menu:
+        return {}
+
+    menu_items: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for category in raw_menu.get("itemCategories") or []:
+        if not isinstance(category, dict):
+            continue
+        for item in category.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+
+            item_id = optional_str(item.get("itemId") or item.get("id"))
+            if not item_id:
+                continue
+
+            sku = optional_str(item.get("sku"))
+            for item_size in item.get("itemSizes") or []:
+                if not isinstance(item_size, dict):
+                    continue
+
+                size_id = optional_str(item_size.get("sizeId"))
+                menu_items[(item_id, size_id)] = {
+                    "name": optional_str(item.get("name")),
+                    "image": optional_str(item_size.get("buttonImageUrl") or item.get("buttonImageUrl")),
+                    "sku": sku,
+                    "sizeName": optional_str(item_size.get("sizeName")),
+                }
+
+    return menu_items
+
+
+def find_order_menu_item(
+    menu_items: dict[tuple[str, str | None], dict[str, Any]],
+    product_id: str | None,
+    product_size_id: str | None,
+) -> dict[str, Any] | None:
+    if not product_id:
+        return None
+
+    if (product_id, product_size_id) in menu_items:
+        return menu_items[(product_id, product_size_id)]
+    if (product_id, None) in menu_items:
+        return menu_items[(product_id, None)]
+    return next((value for (item_id, _), value in menu_items.items() if item_id == product_id), None)
 
 
 async def list_order_payment_events(db: AsyncSession, order_id) -> list[TBankPaymentEvent]:
@@ -365,25 +567,25 @@ async def handle_tbank_webhook(db: AsyncSession, payload: dict[str, Any]) -> Non
 
     next_status = map_tbank_status(status_value)
     payment.last_notification = payload
-    payment.status = next_status
     if bank_payment_id and not payment.bank_payment_id:
         payment.bank_payment_id = bank_payment_id
 
     order = payment.order
-    order.payment_status = next_status
+    payment.status = next_status
+    order.payment_status = resolve_order_payment_status(order, next_status)
     order.payment_error_info = None
     event.processed = True
 
-    if next_status == "paid":
+    if order.payment_status == "paid":
         payment.paid_at = payment.paid_at or utcnow()
         order.creation_status = order.creation_status if order.iiko_order_id else "PaymentConfirmed"
-    elif next_status in {"payment_failed", "payment_cancelled", "payment_expired"}:
+    elif order.payment_status in {"payment_failed", "payment_cancelled", "payment_expired"}:
         payment.failed_at = payment.failed_at or utcnow()
         order.creation_status = "PaymentFailed"
 
     await db.commit()
 
-    if next_status == "paid":
+    if order.payment_status == "paid":
         try:
             await dispatch_paid_order_to_iiko(db, order.id)
         except Exception:
@@ -534,6 +736,8 @@ async def sync_pending_tbank_payments_once() -> None:
             except Exception:
                 logger.exception("Failed to sync T-Bank payment %s state", payment_id)
 
+        await expire_overdue_unpaid_orders(db)
+
 
 async def sync_tbank_payment_state(db: AsyncSession, payment_id) -> None:
     payment = await db.scalar(
@@ -593,22 +797,99 @@ async def sync_tbank_payment_state(db: AsyncSession, payment_id) -> None:
     db.add(event)
 
     payment.last_notification = state
-    payment.status = next_status
     order = payment.order
-    order.payment_status = next_status
+    payment.status = next_status
+    order.payment_status = resolve_order_payment_status(order, next_status)
     order.payment_error_info = None
 
-    if next_status == "paid":
+    if order.payment_status == "paid":
         payment.paid_at = payment.paid_at or utcnow()
         order.creation_status = order.creation_status if order.iiko_order_id else "PaymentConfirmed"
-    elif next_status in {"payment_failed", "payment_cancelled", "payment_expired"}:
+    elif order.payment_status in {"payment_failed", "payment_cancelled", "payment_expired"}:
         payment.failed_at = payment.failed_at or utcnow()
         order.creation_status = "PaymentFailed"
 
     await db.commit()
 
-    if next_status == "paid":
+    if order.payment_status == "paid":
         await dispatch_paid_order_to_iiko(db, order.id)
+
+
+async def expire_customer_overdue_unpaid_orders(db: AsyncSession, customer: Customer) -> None:
+    await expire_overdue_unpaid_orders(db, customer_id=customer.id)
+
+
+async def expire_overdue_unpaid_orders(db: AsyncSession, *, customer_id=None, limit: int = 100) -> int:
+    statement = (
+        select(Order)
+        .options(selectinload(Order.payments))
+        .where(
+            Order.payment_status.in_(ACTIVE_PAYMENT_STATUSES),
+            Order.iiko_order_id.is_(None),
+        )
+        .order_by(Order.created_at)
+        .limit(limit)
+    )
+    if customer_id is not None:
+        statement = statement.where(Order.customer_id == customer_id)
+
+    result = await db.scalars(statement)
+    orders = list(result)
+
+    expired_count = 0
+    now = utcnow()
+    for order in orders:
+        if not is_order_payment_overdue(order, now=now):
+            continue
+
+        expire_unpaid_order(order, now=now)
+        expired_count += 1
+
+    if expired_count:
+        await db.commit()
+
+    return expired_count
+
+
+def is_order_payment_overdue(order: Order, *, now: datetime | None = None) -> bool:
+    deadline = get_order_payment_deadline(order)
+    if deadline is None:
+        return False
+
+    return (now or utcnow()) >= deadline
+
+
+def get_order_payment_deadline(order: Order) -> datetime | None:
+    if order.complete_before is not None:
+        return normalize_order_datetime(order.complete_before) - timedelta(
+            minutes=settings.order_unpaid_payment_deadline_minutes
+        )
+
+    return normalize_order_datetime(order.created_at) + timedelta(minutes=settings.order_unpaid_payment_ttl_minutes)
+
+
+def expire_unpaid_order(order: Order, *, now: datetime) -> None:
+    order.payment_status = "payment_expired"
+    order.payment_error_info = {
+        "message": "Payment was not completed before the order payment deadline",
+        "reason": "order_payment_deadline_expired",
+    }
+    order.creation_status = "PaymentExpired"
+
+    for payment in order.payments:
+        if payment.status in FINAL_PAYMENT_STATUSES:
+            continue
+        payment.is_active = False
+        payment.error_info = order.payment_error_info
+
+
+def resolve_order_payment_status(order: Order, next_status: str) -> str:
+    if next_status == "paid":
+        return next_status
+    if next_status in ACTIVE_PAYMENT_STATUSES and is_order_payment_overdue(order):
+        expire_unpaid_order(order, now=utcnow())
+        return "payment_expired"
+    return next_status
 
 
 async def run_tbank_payment_state_poller(stop_event: asyncio.Event) -> None:
@@ -1168,6 +1449,33 @@ def format_iiko_datetime(value: datetime) -> str:
         value = value.astimezone(timezone).replace(tzinfo=None)
 
     return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def resolve_payment_redirect_due_date(complete_before: datetime | None) -> str | None:
+    deadline = resolve_new_order_payment_deadline(complete_before)
+    min_deadline = utcnow() + timedelta(seconds=MIN_TBANK_REDIRECT_DUE_SECONDS)
+    if deadline < min_deadline:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Order payment deadline is too close to completeBefore",
+        )
+
+    return deadline.isoformat(timespec="seconds")
+
+
+def resolve_new_order_payment_deadline(complete_before: datetime | None) -> datetime:
+    if complete_before is None:
+        return utcnow() + timedelta(minutes=settings.order_unpaid_payment_ttl_minutes)
+
+    return normalize_order_datetime(complete_before) - timedelta(
+        minutes=settings.order_unpaid_payment_deadline_minutes
+    )
+
+
+def normalize_order_datetime(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc)
+    return value.replace(tzinfo=get_iiko_terminal_timezone()).astimezone(timezone.utc)
 
 
 def get_iiko_terminal_timezone() -> ZoneInfo | timezone:

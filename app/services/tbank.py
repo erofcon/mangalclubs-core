@@ -78,6 +78,7 @@ async def init_tbank_payment(
     notification_url: str,
     success_url: str | None,
     fail_url: str | None,
+    redirect_due_date: str | None = None,
     data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -93,6 +94,8 @@ async def init_tbank_payment(
         payload["SuccessURL"] = success_url
     if fail_url:
         payload["FailURL"] = fail_url
+    if redirect_due_date:
+        payload["RedirectDueDate"] = redirect_due_date
     if data:
         payload["DATA"] = data
 

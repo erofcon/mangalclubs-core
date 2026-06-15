@@ -233,6 +233,16 @@ class PaymentInitOut(BaseModel):
     payment_url: str = Field(serialization_alias="paymentUrl")
 
 
+class CustomerOrderPaymentOut(BaseModel):
+    id: UUID
+    status: str
+    amount: float
+    amount_kopecks: int = Field(serialization_alias="amountKopecks")
+    bank_order_id: str = Field(serialization_alias="bankOrderId")
+    bank_payment_id: str | None = Field(default=None, serialization_alias="bankPaymentId")
+    payment_url: str = Field(serialization_alias="paymentUrl")
+
+
 class OrderCreateOut(BaseModel):
     id: UUID
     customer_id: UUID | None = Field(default=None, serialization_alias="customerId")
@@ -320,6 +330,7 @@ class CustomerOrderOut(BaseModel):
     items: list[Any]
     payment_status: str = Field(serialization_alias="paymentStatus")
     payment_amount_kopecks: int | None = Field(default=None, serialization_alias="paymentAmountKopecks")
+    payment: CustomerOrderPaymentOut | None = None
     iiko_order_id: str | None = Field(default=None, serialization_alias="iikoOrderId")
     iiko_external_number: str | None = Field(default=None, serialization_alias="iikoExternalNumber")
     creation_status: str | None = Field(default=None, serialization_alias="creationStatus")

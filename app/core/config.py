@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     tbank_success_url: str | None = None
     tbank_fail_url: str | None = None
     tbank_paid_statuses: str = "CONFIRMED"
+    order_unpaid_payment_deadline_minutes: int = 20
+    order_unpaid_payment_ttl_minutes: int = 30
     delivery_area_geojson: str | None = None
 
     jwt_secret_key: str

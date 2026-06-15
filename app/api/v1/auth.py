@@ -92,9 +92,13 @@ def delete_refresh_cookie(response: Response) -> None:
 
 
 @router.post("/customer/otp/request", response_model=OtpRequested)
-async def customer_otp_request(payload: CustomerOtpRequest, db: AsyncSession = Depends(get_db)):
-    await request_customer_otp(db, payload.phone)
-    return OtpRequested()
+async def customer_otp_request(payload: CustomerOtpRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    ip, _ = client_meta(request)
+    result = await request_customer_otp(db, payload.phone, ip_address=ip)
+    return OtpRequested(
+        retry_after_seconds=result.retry_after_seconds,
+        resend_available_at=result.resend_available_at,
+    )
 
 
 @router.post("/customer/otp/verify", response_model=TokenPair, response_model_exclude_none=True)

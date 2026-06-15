@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     otp_resend_cooldown_seconds: int = 60
     otp_max_attempts: int = 5
     otp_dev_mode: bool = False
+    otp_phone_cooldown_schedule_seconds: str = "30,60,900"
+    otp_phone_window_seconds: int = 24 * 60 * 60
+    otp_global_cooldown_seconds: int = 30
+    otp_ip_window_seconds: int = 60 * 60
+    otp_ip_max_requests_per_window: int = 10
 
     cookie_secure: bool = True
 
@@ -62,6 +67,16 @@ class Settings(BaseSettings):
     @property
     def tbank_paid_status_set(self) -> set[str]:
         return {status.strip().upper() for status in self.tbank_paid_statuses.split(",") if status.strip()}
+
+    @property
+    def otp_phone_cooldown_schedule(self) -> list[int]:
+        values: list[int] = []
+        for raw_value in self.otp_phone_cooldown_schedule_seconds.split(","):
+            raw_value = raw_value.strip()
+            if raw_value:
+                values.append(max(0, int(raw_value)))
+
+        return values or [self.otp_resend_cooldown_seconds]
 
     @property
     def resolved_tbank_notification_url(self) -> str | None:

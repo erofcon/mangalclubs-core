@@ -1,4 +1,4 @@
-from app.models.auth import OtpChallenge, RefreshSession
+from app.models.auth import OtpChallenge, OtpRateLimit, RefreshSession
 from app.models.booking import Booking, BookingCategory, BookingImage
 from app.models.customer import Customer
 from app.models.delivery import DeliveryZone
@@ -26,5 +26,6 @@ __all__ = (
     "Story",
     "StorySlide",
     "OtpChallenge",
+    "OtpRateLimit",
     "RefreshSession",
 )

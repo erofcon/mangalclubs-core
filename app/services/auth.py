@@ -1,13 +1,17 @@
+import math
+from dataclasses import dataclass
+from datetime import datetime
 from datetime import timedelta
 import hmac
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.auth import AuthSubjectType, OtpChallenge, RefreshSession
+from app.models.auth import AuthSubjectType, OtpChallenge, OtpRateLimit, RefreshSession
 from app.models.base import utcnow
 from app.models.customer import Customer
 from app.models.staff import StaffUser
@@ -19,10 +23,19 @@ from app.services.otp import (
     hash_otp,
     normalize_phone,
     otp_expires_at,
-    otp_resend_available_at,
     print_fake_sms,
     verify_otp,
 )
+
+
+OTP_RATE_LIMIT_PHONE_SCOPE = "phone"
+OTP_RATE_LIMIT_IP_SCOPE = "ip"
+
+
+@dataclass(frozen=True)
+class OtpRequestResult:
+    retry_after_seconds: int
+    resend_available_at: datetime
 
 
 def normalize_phone_or_422(phone_raw: str) -> str:
@@ -30,6 +43,60 @@ def normalize_phone_or_422(phone_raw: str) -> str:
         return normalize_phone(phone_raw)
     except InvalidPhoneNumberError:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid phone number")
+
+
+def seconds_until(moment, current_time) -> int:
+    return max(0, math.ceil((moment - current_time).total_seconds()))
+
+
+def otp_phone_cooldown_seconds(attempts: int) -> int:
+    schedule = settings.otp_phone_cooldown_schedule
+    return schedule[min(attempts, len(schedule) - 1)]
+
+
+async def get_or_create_otp_rate_limit(
+    db: AsyncSession,
+    *,
+    scope: str,
+    key: str,
+    current_time,
+) -> OtpRateLimit:
+    await db.execute(
+        pg_insert(OtpRateLimit)
+        .values(
+            id=uuid4(),
+            scope=scope,
+            key=key,
+            attempts=0,
+            window_started_at=current_time,
+            created_at=current_time,
+            updated_at=current_time,
+        )
+        .on_conflict_do_nothing(constraint="uq_otp_rate_limits_scope_key")
+    )
+
+    rate_limit = await db.scalar(
+        select(OtpRateLimit)
+        .where(
+            OtpRateLimit.scope == scope,
+            OtpRateLimit.key == key,
+        )
+        .with_for_update()
+    )
+
+    if not rate_limit:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "OTP rate limit is not available")
+
+    return rate_limit
+
+
+def reset_rate_limit_window_if_needed(rate_limit: OtpRateLimit, *, current_time, window_seconds: int) -> None:
+    if rate_limit.window_started_at + timedelta(seconds=window_seconds) > current_time:
+        return
+
+    rate_limit.attempts = 0
+    rate_limit.blocked_until = None
+    rate_limit.window_started_at = current_time
 
 
 def validate_refresh_session_context(
@@ -47,8 +114,41 @@ def validate_refresh_session_context(
     session.user_agent = user_agent
 
 
-async def request_customer_otp(db: AsyncSession, phone_raw: str) -> None:
+async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: str | None) -> OtpRequestResult:
     phone = normalize_phone_or_422(phone_raw)
+    current_time = now_utc()
+
+    phone_rate_limit = await get_or_create_otp_rate_limit(
+        db,
+        scope=OTP_RATE_LIMIT_PHONE_SCOPE,
+        key=phone,
+        current_time=current_time,
+    )
+    reset_rate_limit_window_if_needed(
+        phone_rate_limit,
+        current_time=current_time,
+        window_seconds=settings.otp_phone_window_seconds,
+    )
+
+    ip_rate_limit = None
+    if ip_address:
+        ip_rate_limit = await get_or_create_otp_rate_limit(
+            db,
+            scope=OTP_RATE_LIMIT_IP_SCOPE,
+            key=ip_address,
+            current_time=current_time,
+        )
+        reset_rate_limit_window_if_needed(
+            ip_rate_limit,
+            current_time=current_time,
+            window_seconds=settings.otp_ip_window_seconds,
+        )
+
+    blocked_until_values = [
+        rate_limit.blocked_until
+        for rate_limit in (phone_rate_limit, ip_rate_limit)
+        if rate_limit and rate_limit.blocked_until and rate_limit.blocked_until > current_time
+    ]
 
     active = await db.scalar(
         select(OtpChallenge)
@@ -60,22 +160,50 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str) -> None:
         .order_by(OtpChallenge.created_at.desc())
     )
 
-    if active and active.resend_available_at > now_utc():
-        return
+    if active and active.resend_available_at > current_time:
+        blocked_until_values.append(active.resend_available_at)
+
+    if blocked_until_values:
+        resend_available_at = max(blocked_until_values)
+        return OtpRequestResult(
+            retry_after_seconds=seconds_until(resend_available_at, current_time),
+            resend_available_at=resend_available_at,
+        )
+
+    phone_rate_limit.attempts += 1
+    phone_rate_limit.blocked_until = current_time + timedelta(
+        seconds=otp_phone_cooldown_seconds(phone_rate_limit.attempts - 1)
+    )
+
+    if ip_rate_limit:
+        ip_rate_limit.attempts += 1
+        if ip_rate_limit.attempts >= settings.otp_ip_max_requests_per_window:
+            ip_rate_limit.blocked_until = current_time + timedelta(seconds=settings.otp_ip_window_seconds)
+        else:
+            ip_rate_limit.blocked_until = current_time + timedelta(seconds=settings.otp_global_cooldown_seconds)
 
     code = generate_otp_code()
+    resend_available_at = max(
+        rate_limit.blocked_until
+        for rate_limit in (phone_rate_limit, ip_rate_limit)
+        if rate_limit and rate_limit.blocked_until
+    )
     db.add(
         OtpChallenge(
             phone=phone,
             code_hash=hash_otp(phone, code),
             attempts_left=settings.otp_max_attempts,
             expires_at=otp_expires_at(),
-            resend_available_at=otp_resend_available_at(),
+            resend_available_at=resend_available_at,
         )
     )
     await db.commit()
 
     print_fake_sms(phone, code)
+    return OtpRequestResult(
+        retry_after_seconds=seconds_until(resend_available_at, current_time),
+        resend_available_at=resend_available_at,
+    )
 
 
 async def verify_customer_otp_and_issue_tokens(

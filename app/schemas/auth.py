@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import datetime
 from uuid import UUID
 from typing import Any
 
@@ -81,6 +82,8 @@ class TokenPair(BaseModel):
 class OtpRequested(BaseModel):
     ok: bool = True
     message: str = "If the phone is valid, code will be sent"
+    retry_after_seconds: int = 0
+    resend_available_at: datetime | None = None
 
 
 class LogoutResponse(BaseModel):

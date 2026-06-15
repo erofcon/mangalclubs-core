@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Enum, Index, Integer, String
+from sqlalchemy import DateTime, Enum, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,6 +23,20 @@ class OtpChallenge(Base, IdMixin, TimestampMixin):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
     resend_available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OtpRateLimit(Base, IdMixin, TimestampMixin):
+    __tablename__ = "otp_rate_limits"
+
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    blocked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("scope", "key", name="uq_otp_rate_limits_scope_key"),
+    )
 
 
 class RefreshSession(Base, IdMixin, TimestampMixin):

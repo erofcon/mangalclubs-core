@@ -30,9 +30,9 @@ class IikoTerminalError(Exception):
     pass
 
 
-ORDERS_AVAILABLE_MESSAGE = "Онлайн-заказы доступны"
-ORDERS_UNAVAILABLE_MESSAGE = "Онлайн-заказы временно недоступны"
-TERMINAL_UNAVAILABLE_MESSAGE = "Онлайн-заказы временно недоступны: терминал iiko не отвечает"
+ORDERS_AVAILABLE_MESSAGE = "Сейчас можно оформить онлайн-заказ."
+ORDERS_UNAVAILABLE_MESSAGE = "Сейчас онлайн-заказы временно недоступны. Пожалуйста, попробуйте позже."
+TERMINAL_UNAVAILABLE_MESSAGE = "Сейчас онлайн-заказы временно недоступны. Пожалуйста, попробуйте позже."
 
 
 def token_refresh_deadline() -> datetime:
@@ -313,7 +313,7 @@ async def get_organization_availability_by_slug(db: AsyncSession, slug: str) -> 
         .where(Organization.slug == slug)
     )
     if not organization:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заведение не найдено.")
 
     return await get_iiko_availability(db, organization)
 

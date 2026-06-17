@@ -12,6 +12,7 @@ from app.models.delivery import DeliveryZone
 from app.models.organization import Organization
 from app.schemas.delivery import DeliveryCheckIn
 from app.schemas.delivery import DeliveryZoneCreate, DeliveryZoneUpdate
+from app.services.geocoding import resolve_address_for_coordinates
 
 DEFAULT_GROZNY_DELIVERY_AREA_GEOJSON: dict = {
     "type": "Polygon",
@@ -207,12 +208,17 @@ async def check_delivery(db: AsyncSession, payload: DeliveryCheckIn) -> dict:
         organization_id=payload.organization_id,
         organization_slug=payload.organization_slug,
     )
-    return await calculate_delivery_for_coordinates(
+    calculation = await calculate_delivery_for_coordinates(
         db,
         organization=organization,
         latitude=payload.coordinates.latitude,
         longitude=payload.coordinates.longitude,
     )
+    calculation["address"] = await resolve_address_for_coordinates(
+        latitude=payload.coordinates.latitude,
+        longitude=payload.coordinates.longitude,
+    )
+    return calculation
 
 
 async def calculate_delivery_for_coordinates(
@@ -236,6 +242,7 @@ async def calculate_delivery_for_coordinates(
             "distance_km": float(distance_km),
             "price": None,
             "zone": None,
+            "address": None,
         }
 
     zone = await find_delivery_zone_for_distance(db, distance_km)
@@ -246,6 +253,7 @@ async def calculate_delivery_for_coordinates(
             "distance_km": float(distance_km),
             "price": None,
             "zone": None,
+            "address": None,
         }
 
     return {
@@ -254,6 +262,7 @@ async def calculate_delivery_for_coordinates(
         "distance_km": float(distance_km),
         "price": zone.price,
         "zone": zone,
+        "address": None,
     }
 
 

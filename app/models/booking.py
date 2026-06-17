@@ -66,11 +66,19 @@ class Booking(Base, IdMixin, TimestampMixin):
 
     organization = relationship("Organization", back_populates="bookings")
     category: Mapped[BookingCategory] = relationship(back_populates="bookings")
-    images: Mapped[list[BookingImage]] = relationship(
+    media: Mapped[list[BookingImage]] = relationship(
         back_populates="booking",
         cascade="all, delete-orphan",
         order_by="BookingImage.sort_order",
     )
+
+    @property
+    def horizontal_images(self) -> list[BookingImage]:
+        return [image for image in self.media if image.orientation == BookingImageOrientation.horizontal]
+
+    @property
+    def vertical_images(self) -> list[BookingImage]:
+        return [image for image in self.media if image.orientation == BookingImageOrientation.vertical]
 
     __table_args__ = (
         UniqueConstraint("organization_id", "category_id", "title", name="uq_bookings_organization_category_title"),
@@ -96,7 +104,7 @@ class BookingImage(Base, IdMixin, TimestampMixin):
     alt_text: Mapped[str | None] = mapped_column(String(255))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    booking: Mapped[Booking] = relationship(back_populates="images")
+    booking: Mapped[Booking] = relationship(back_populates="media")
 
     __table_args__ = (
         Index("ix_booking_images_booking_sort", "booking_id", "sort_order"),

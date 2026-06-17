@@ -27,7 +27,7 @@ def category_with_bookings_query(*, include_inactive: bool = False):
 
     statement = select(BookingCategory).options(
         selectinload(BookingCategory.organization),
-        bookings_loader.selectinload(Booking.images),
+        bookings_loader.selectinload(Booking.media),
     )
     if not include_inactive:
         statement = statement.where(BookingCategory.is_active.is_(True))
@@ -38,7 +38,7 @@ def booking_query(*, include_inactive: bool = False):
     statement = select(Booking).options(
         selectinload(Booking.organization),
         selectinload(Booking.category).selectinload(BookingCategory.organization),
-        selectinload(Booking.images),
+        selectinload(Booking.media),
     )
     if not include_inactive:
         statement = statement.where(Booking.is_active.is_(True)).where(
@@ -170,7 +170,7 @@ async def delete_booking_category(db: AsyncSession, category_id: UUID) -> None:
     media_urls = [category.preview_url]
     for booking in category.bookings:
         media_urls.append(booking.preview_url)
-        media_urls.extend(image.url for image in booking.images)
+        media_urls.extend(image.url for image in booking.media)
 
     await db.delete(category)
     await db.commit()
@@ -228,7 +228,7 @@ async def create_booking(db: AsyncSession, payload: BookingCreate) -> Booking:
         sort_order=payload.sort_order,
         is_active=payload.is_active,
     )
-    replace_booking_images(booking, payload.images)
+    replace_booking_images(booking, collect_booking_images(payload))
     db.add(booking)
 
     try:
@@ -261,10 +261,22 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
             old_media_urls.append(booking.preview_url)
         booking.preview_url = next_preview_url
 
-    if payload.images is not None:
-        new_image_urls = {str(image.url) for image in payload.images}
-        old_media_urls.extend(image.url for image in booking.images if image.url not in new_image_urls)
-        replace_booking_images(booking, payload.images)
+    if payload.horizontal_images is not None or payload.vertical_images is not None:
+        current_images = list(booking.media)
+        next_images = list(current_images)
+
+        if payload.horizontal_images is not None:
+            next_images = [image for image in next_images if image_orientation(image) != BookingImageOrientation.horizontal]
+            next_images.extend(with_image_orientation(payload.horizontal_images, BookingImageOrientation.horizontal))
+
+        if payload.vertical_images is not None:
+            next_images = [image for image in next_images if image_orientation(image) != BookingImageOrientation.vertical]
+            next_images.extend(with_image_orientation(payload.vertical_images, BookingImageOrientation.vertical))
+
+        ensure_booking_images_limit(next_images)
+        new_image_urls = {str(image.url) for image in next_images}
+        old_media_urls.extend(image.url for image in current_images if image.url not in new_image_urls)
+        replace_booking_images(booking, next_images)
 
     try:
         await db.commit()
@@ -280,7 +292,7 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
 
 async def delete_booking(db: AsyncSession, booking_id: UUID) -> None:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
-    media_urls = [booking.preview_url, *(image.url for image in booking.images)]
+    media_urls = [booking.preview_url, *(image.url for image in booking.media)]
 
     await db.delete(booking)
     await db.commit()
@@ -300,28 +312,6 @@ async def upload_booking_preview(db: AsyncSession, booking_id: UUID, file: Uploa
     return await get_booking_by_id(db, booking.id, include_inactive=True)
 
 
-async def add_booking_image(
-    db: AsyncSession,
-    booking_id: UUID,
-    file: UploadFile,
-    orientation: BookingImageOrientation = BookingImageOrientation.horizontal,
-    alt_text: str | None = None,
-    sort_order: int = 0,
-) -> Booking:
-    booking = await get_booking_by_id(db, booking_id, include_inactive=True)
-    image = BookingImage(
-        booking_id=booking.id,
-        url=await save_media_upload(file, "bookings", str(booking.id)),
-        orientation=orientation,
-        alt_text=alt_text.strip() if alt_text else None,
-        sort_order=sort_order,
-    )
-    db.add(image)
-    await db.commit()
-
-    return await get_booking_by_id(db, booking.id, include_inactive=True)
-
-
 async def add_booking_images(
     db: AsyncSession,
     booking_id: UUID,
@@ -330,6 +320,7 @@ async def add_booking_images(
     sort_order: int = 0,
 ) -> Booking:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
+    ensure_booking_images_limit([*booking.media, *files])
 
     for index, file in enumerate(files):
         image = BookingImage(
@@ -346,7 +337,7 @@ async def add_booking_images(
 
 async def delete_booking_image(db: AsyncSession, booking_id: UUID, image_id: UUID) -> Booking:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
-    image = next((item for item in booking.images if item.id == image_id), None)
+    image = next((item for item in booking.media if item.id == image_id), None)
     if image is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking image not found")
 
@@ -371,7 +362,7 @@ async def validate_booking_links(db: AsyncSession, organization_id: UUID, catego
 
 
 def replace_booking_images(booking: Booking, images) -> None:
-    booking.images = [
+    booking.media = [
         BookingImage(
             url=str(item.url),
             orientation=item.orientation,
@@ -380,3 +371,33 @@ def replace_booking_images(booking: Booking, images) -> None:
         )
         for item in images
     ]
+
+
+def collect_booking_images(payload: BookingCreate) -> list:
+    images = [
+        *with_image_orientation(payload.horizontal_images, BookingImageOrientation.horizontal),
+        *with_image_orientation(payload.vertical_images, BookingImageOrientation.vertical),
+    ]
+    ensure_booking_images_limit(images)
+    return images
+
+
+def with_image_orientation(images, orientation: BookingImageOrientation) -> list[BookingImage]:
+    return [
+        BookingImage(
+            url=str(item.url),
+            orientation=orientation,
+            alt_text=item.alt_text,
+            sort_order=item.sort_order,
+        )
+        for item in images
+    ]
+
+
+def image_orientation(image) -> BookingImageOrientation:
+    return BookingImageOrientation(image.orientation)
+
+
+def ensure_booking_images_limit(images) -> None:
+    if len(images) > 24:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A booking can have at most 24 images")

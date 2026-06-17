@@ -10,9 +10,9 @@ from app.core.config import settings
 from app.models.organization import Organization, OrganizationWorkingHour
 
 
-ORDERS_OPEN_MESSAGE = "Organization accepts online orders now"
-NON_WORKING_DAY_MESSAGE = "Сегодня организация не принимает онлайн-заказы"
-OUTSIDE_WORKING_HOURS_MESSAGE = "Organization accepts online orders only during working hours"
+ORDERS_OPEN_MESSAGE = "Сейчас можно оформить онлайн-заказ."
+NON_WORKING_DAY_MESSAGE = "Сегодня онлайн-заказы не принимаются."
+OUTSIDE_WORKING_HOURS_MESSAGE = "Сейчас онлайн-заказы не принимаются. Пожалуйста, выберите другое время."
 
 
 def get_organization_orders_availability(

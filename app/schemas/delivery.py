@@ -62,12 +62,28 @@ class DeliveryAreaOut(BaseModel):
     coordinates: list
 
 
+class DeliveryResolvedAddressOut(BaseModel):
+    formatted: str | None = None
+    country: str | None = None
+    country_code: str | None = Field(default=None, serialization_alias="countryCode")
+    region: str | None = None
+    city: str | None = None
+    district: str | None = None
+    suburb: str | None = None
+    street: str | None = None
+    house: str | None = None
+    postcode: str | None = None
+    place_id: str | None = Field(default=None, serialization_alias="placeId")
+    source: str = "geoapify"
+
+
 class DeliveryCalculationOut(BaseModel):
     available: bool
     reason: str | None = None
     distance_km: float = Field(serialization_alias="distanceKm")
     price: int | None
     zone: DeliveryZoneOut | None = None
+    address: DeliveryResolvedAddressOut | None = None
 
 
 class DeliverySettingsOut(BaseModel):

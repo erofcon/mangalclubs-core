@@ -16,4 +16,4 @@ class Customer(Base, IdMixin, TimestampMixin):
     avatar_url: Mapped[str | None] = mapped_column(String(1024))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    orders = relationship("Order", back_populates="customer")
+    orders = relationship("Order", back_populates="customer", passive_deletes=True)

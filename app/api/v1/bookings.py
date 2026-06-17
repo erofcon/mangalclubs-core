@@ -9,7 +9,6 @@ from app.models.booking import BookingImageOrientation
 from app.models.staff import StaffUser
 from app.schemas.booking import BookingCategoryCreate, BookingCategoryOut, BookingCategoryUpdate, BookingCreate, BookingOut, BookingUpdate
 from app.services.bookings import (
-    add_booking_image,
     add_booking_images,
     create_booking,
     create_booking_category,
@@ -131,29 +130,38 @@ async def bookings_upload_preview(
     return await upload_booking_preview(db, booking_id, preview)
 
 
-@router.post("/{booking_id}/images", response_model=BookingOut)
-async def bookings_add_image(
-    booking_id: UUID,
-    image: UploadFile = File(...),
-    orientation: BookingImageOrientation = Form(default=BookingImageOrientation.horizontal),
-    alt_text: str | None = Form(default=None),
-    sort_order: int = Form(default=0),
-    db: AsyncSession = Depends(get_db),
-    _: StaffUser = Depends(get_current_admin),
-):
-    return await add_booking_image(db, booking_id, image, orientation=orientation, alt_text=alt_text, sort_order=sort_order)
-
-
-@router.post("/{booking_id}/images/bulk", response_model=BookingOut)
-async def bookings_add_images(
+@router.post("/{booking_id}/images/horizontal", response_model=BookingOut)
+async def bookings_add_horizontal_images(
     booking_id: UUID,
     images: list[UploadFile] = File(...),
-    orientation: BookingImageOrientation = Form(default=BookingImageOrientation.horizontal),
     sort_order: int = Form(default=0),
     db: AsyncSession = Depends(get_db),
     _: StaffUser = Depends(get_current_admin),
 ):
-    return await add_booking_images(db, booking_id, images, orientation=orientation, sort_order=sort_order)
+    return await add_booking_images(
+        db,
+        booking_id,
+        images,
+        orientation=BookingImageOrientation.horizontal,
+        sort_order=sort_order,
+    )
+
+
+@router.post("/{booking_id}/images/vertical", response_model=BookingOut)
+async def bookings_add_vertical_images(
+    booking_id: UUID,
+    images: list[UploadFile] = File(...),
+    sort_order: int = Form(default=0),
+    db: AsyncSession = Depends(get_db),
+    _: StaffUser = Depends(get_current_admin),
+):
+    return await add_booking_images(
+        db,
+        booking_id,
+        images,
+        orientation=BookingImageOrientation.vertical,
+        sort_order=sort_order,
+    )
 
 
 @router.delete("/{booking_id}/images/{image_id}", response_model=BookingOut)

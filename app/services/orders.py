@@ -1070,6 +1070,7 @@ def serialize_delivery_calculation(delivery_calculation: dict[str, Any] | None) 
         }
         if zone is not None
         else None,
+        "address": delivery_calculation.get("address"),
     }
 
 

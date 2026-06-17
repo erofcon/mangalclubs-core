@@ -2,10 +2,16 @@ from fastapi import APIRouter, Depends, File, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_customer
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.customer import Customer
 from app.schemas.customer import CustomerOut, CustomerUpdate
-from app.services.customers import delete_customer_avatar, update_customer_profile, upload_customer_avatar
+from app.services.customers import (
+    delete_customer_avatar,
+    delete_customer_profile,
+    update_customer_profile,
+    upload_customer_avatar,
+)
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -40,3 +46,20 @@ async def customers_delete_avatar(
 ):
     await delete_customer_avatar(db, customer)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def customers_delete_me(
+    db: AsyncSession = Depends(get_db),
+    customer: Customer = Depends(get_current_customer),
+):
+    await delete_customer_profile(db, customer)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(
+        "refresh_token",
+        path="/api/v1/auth",
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response

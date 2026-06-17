@@ -1,5 +1,6 @@
 import json
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +33,11 @@ class Settings(BaseSettings):
     order_unpaid_payment_deadline_minutes: int = 20
     order_unpaid_payment_ttl_minutes: int = 30
     delivery_area_geojson: str | None = None
+    geoapify_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEOAPIFY_API_KEY", "EXPO_PUBLIC_GEOAPIFY_KEY"),
+    )
+    geoapify_request_timeout_seconds: float = 3.0
 
     jwt_secret_key: str
     access_token_minutes: int = 15
@@ -49,7 +55,7 @@ class Settings(BaseSettings):
 
     cookie_secure: bool = True
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", populate_by_name=True)
 
     @property
     def cors_origin_list(self) -> list[str]:

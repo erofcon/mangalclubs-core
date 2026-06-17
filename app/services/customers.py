@@ -8,7 +8,7 @@ from app.models.auth import AuthSubjectType, RefreshSession
 from app.models.customer import Customer
 from app.models.order import Order
 from app.schemas.customer import CustomerUpdate
-from app.services.media import delete_local_media_file, save_media_upload
+from app.services.media import delete_local_media_file, save_avatar_upload
 
 
 async def update_customer_profile(
@@ -34,7 +34,7 @@ async def update_customer_profile(
 
 async def upload_customer_avatar(db: AsyncSession, customer: Customer, file: UploadFile) -> Customer:
     old_avatar_url = customer.avatar_url
-    customer.avatar_url = await save_media_upload(file, "customers/avatars", str(customer.id))
+    customer.avatar_url = await save_avatar_upload(file, "customers/avatars", str(customer.id))
 
     await db.commit()
     delete_local_media_file(old_avatar_url)

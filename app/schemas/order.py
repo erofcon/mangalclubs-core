@@ -340,6 +340,7 @@ class CustomerOrderOut(BaseModel):
     creation_status: str | None = Field(default=None, serialization_alias="creationStatus")
     order_status: str | None = Field(default=None, serialization_alias="orderStatus")
     notification_event: OrderNotificationEvent | None = Field(default=None, serialization_alias="notificationEvent")
+    has_unread_notification: bool = Field(default=False, serialization_alias="hasUnreadNotification")
     total_sum: float | None = Field(default=None, serialization_alias="totalSum")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")

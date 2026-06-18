@@ -140,3 +140,40 @@ class TBankPaymentEvent(Base, IdMixin, TimestampMixin):
     error_info: Mapped[dict | None] = mapped_column(JSON)
 
     payment = relationship("TBankPayment", back_populates="events")
+
+
+class CustomerOrderNotification(Base, IdMixin, TimestampMixin):
+    __tablename__ = "customer_order_notifications"
+
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    push_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    push_error: Mapped[dict | None] = mapped_column(JSON)
+
+    customer = relationship("Customer")
+    order = relationship("Order")
+
+    __table_args__ = (
+        Index(
+            "uq_customer_order_notifications_order_event",
+            "order_id",
+            "event_type",
+            unique=True,
+        ),
+        Index("ix_customer_order_notifications_customer_unread", "customer_id", "is_read"),
+    )

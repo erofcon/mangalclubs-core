@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     iiko_request_timeout_seconds: float = 10.0
     iiko_terminal_timezone: str = "Europe/Moscow"
     iiko_order_dispatch_poll_seconds: int = 30
+    iiko_order_status_poll_seconds: int = 15
 
     public_api_base_url: str | None = None
     tbank_api_base_url: str = "https://securepay.tinkoff.ru/v2"
@@ -38,6 +39,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GEOAPIFY_API_KEY", "EXPO_PUBLIC_GEOAPIFY_KEY"),
     )
     geoapify_request_timeout_seconds: float = 3.0
+    expo_push_request_timeout_seconds: float = 5.0
 
     jwt_secret_key: str
     access_token_minutes: int = 15

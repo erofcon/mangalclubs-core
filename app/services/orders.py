@@ -18,7 +18,7 @@ from app.db.session import AsyncSessionLocal
 from app.models.base import utcnow
 from app.models.customer import Customer
 from app.models.menu import MenuItemContent
-from app.models.order import Order, TBankPayment, TBankPaymentEvent
+from app.models.order import CustomerOrderNotification, Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
 from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind
 from app.services.availability import ensure_organization_accepts_orders_now
@@ -31,6 +31,7 @@ from app.services.iiko import (
     request_iiko_json,
 )
 from app.services.otp import InvalidPhoneNumberError, normalize_phone
+from app.services.notifications import ensure_order_notification
 from app.services.tbank import (
     TBankError,
     get_tbank_credentials,
@@ -154,6 +155,8 @@ async def create_order_payment(
     await db.commit()
     await db.refresh(payment)
     await db.refresh(local_order)
+    await ensure_order_notification(db, local_order, "order_created")
+    await db.commit()
 
     return {
         "id": local_order.id,
@@ -233,7 +236,10 @@ async def get_iiko_order_status(
     notification_event = detect_notification_event(order_type, order_status)
 
     if local_order is not None:
+        previous_notification_event = local_order.notification_event
         update_local_order_from_status_response(local_order, data, order_info, order, notification_event)
+        if notification_event and notification_event != previous_notification_event:
+            await ensure_order_notification(db, local_order, notification_event)
         await db.commit()
         await db.refresh(local_order)
 
@@ -338,15 +344,31 @@ async def serialize_customer_orders(db: AsyncSession, orders: list[Order]) -> li
     contents = await list_active_menu_item_contents(db)
     iiko_item_content = {content.iiko_item_id: content for content in contents if content.iiko_item_id}
     sku_content = {content.sku: content for content in contents if content.sku}
+    unread_order_ids = await list_unread_order_notification_ids(db, orders)
 
     return [
         serialize_customer_order(
             order,
             iiko_item_content=iiko_item_content,
             sku_content=sku_content,
+            unread_order_ids=unread_order_ids,
         )
         for order in orders
     ]
+
+
+async def list_unread_order_notification_ids(db: AsyncSession, orders: list[Order]) -> set:
+    order_ids = [order.id for order in orders]
+    if not order_ids:
+        return set()
+
+    result = await db.scalars(
+        select(CustomerOrderNotification.order_id).where(
+            CustomerOrderNotification.order_id.in_(order_ids),
+            CustomerOrderNotification.is_read.is_(False),
+        )
+    )
+    return set(result)
 
 
 async def list_active_menu_item_contents(db: AsyncSession) -> list[MenuItemContent]:
@@ -363,6 +385,7 @@ def serialize_customer_order(
     *,
     iiko_item_content: dict[str, MenuItemContent],
     sku_content: dict[str, MenuItemContent],
+    unread_order_ids: set,
 ) -> dict[str, Any]:
     return {
         "id": order.id,
@@ -388,6 +411,7 @@ def serialize_customer_order(
         "creation_status": order.creation_status,
         "order_status": order.order_status,
         "notification_event": order.notification_event,
+        "has_unread_notification": order.id in unread_order_ids,
         "total_sum": float(order.total_sum) if order.total_sum is not None else None,
         "created_at": order.created_at,
         "updated_at": order.updated_at,
@@ -687,6 +711,8 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "iiko did not return orderInfo")
 
     update_local_order_from_create_response(local_order, data, order_info)
+    if local_order.iiko_order_id:
+        await ensure_order_notification(db, local_order, "order_created")
     await db.commit()
     return True
 
@@ -721,6 +747,45 @@ async def run_iiko_order_dispatcher(stop_event: asyncio.Event) -> None:
 
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=settings.iiko_order_dispatch_poll_seconds)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def sync_active_iiko_order_statuses_once() -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.scalars(
+            select(Order.id)
+            .where(
+                Order.customer_id.is_not(None),
+                Order.iiko_order_id.is_not(None),
+                or_(Order.order_status.is_(None), Order.order_status.not_in(FINAL_ORDER_STATUSES)),
+            )
+            .order_by(Order.updated_at)
+            .limit(50)
+        )
+        order_ids = list(result)
+
+        for order_id in order_ids:
+            try:
+                await get_iiko_order_status(
+                    db,
+                    order_id=str(order_id),
+                    organization_id=None,
+                    organization_slug=None,
+                )
+            except Exception:
+                logger.exception("Failed to sync iiko status for order %s", order_id)
+
+
+async def run_iiko_order_status_poller(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await sync_active_iiko_order_statuses_once()
+        except Exception:
+            logger.exception("Unexpected error while syncing iiko order statuses")
+
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=settings.iiko_order_status_poll_seconds)
         except asyncio.TimeoutError:
             pass
 

@@ -19,6 +19,7 @@ class Organization(Base, IdMixin, TimestampMixin):
     city: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     address: Mapped[str] = mapped_column(String(500), nullable=False)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    whatsapp_phone: Mapped[str | None] = mapped_column(String(32))
     intro: Mapped[str] = mapped_column(Text, nullable=False)
     latitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)
     longitude: Mapped[Decimal] = mapped_column(Numeric(9, 6), nullable=False)

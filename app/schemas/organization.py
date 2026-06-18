@@ -55,6 +55,7 @@ class OrganizationBase(BaseModel):
     city: str = Field(min_length=1, max_length=255)
     address: str = Field(min_length=1, max_length=500)
     phone: str = Field(min_length=1, max_length=32)
+    whatsapp_phone: str | None = Field(default=None, min_length=1, max_length=32)
     intro: str = Field(min_length=1)
     coordinates: CoordinatesIn
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
@@ -83,6 +84,7 @@ class OrganizationBase(BaseModel):
         "iiko_online_payment_type_kind",
         "tbank_terminal_key",
         "tbank_password",
+        "whatsapp_phone",
         mode="before",
     )
     @classmethod
@@ -136,6 +138,7 @@ class OrganizationUpdate(BaseModel):
     city: str | None = Field(default=None, min_length=1, max_length=255)
     address: str | None = Field(default=None, min_length=1, max_length=500)
     phone: str | None = Field(default=None, min_length=1, max_length=32)
+    whatsapp_phone: str | None = Field(default=None, min_length=1, max_length=32)
     intro: str | None = Field(default=None, min_length=1)
     coordinates: CoordinatesIn | None = None
     photo_url: HttpUrl | str | None = Field(default=None, max_length=1024)
@@ -171,6 +174,7 @@ class OrganizationUpdate(BaseModel):
         "iiko_online_payment_type_kind",
         "tbank_terminal_key",
         "tbank_password",
+        "whatsapp_phone",
         mode="before",
     )
     @classmethod
@@ -220,6 +224,7 @@ class OrganizationOut(BaseModel):
     city: str
     address: str
     phone: str
+    whatsapp_phone: str | None
     intro: str
     coordinates: CoordinatesOut
     photo_url: str | None

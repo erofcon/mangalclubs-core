@@ -12,6 +12,20 @@ class Settings(BaseSettings):
     media_url: str = "/media"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    mobile_android_min_supported_build: int = 1
+    mobile_android_latest_build: int = 1
+    mobile_android_store_url: str | None = None
+    mobile_ios_min_supported_build: int = 1
+    mobile_ios_latest_build: int = 1
+    mobile_ios_store_url: str | None = None
+    mobile_force_update_title: str = "Обновите приложение"
+    mobile_force_update_message: str = (
+        "Эта версия приложения больше не поддерживается. "
+        "Пожалуйста, установите свежую версию, чтобы продолжить."
+    )
+    mobile_soft_update_title: str = "Доступно обновление"
+    mobile_soft_update_message: str = "Вышла новая версия приложения. Обновитесь, когда будет удобно."
+
     iiko_api_base_url: str = "https://api-ru.iiko.services"
     iiko_auth_poll_seconds: int = 60
     iiko_menu_poll_seconds: int = 300

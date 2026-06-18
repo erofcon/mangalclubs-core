@@ -14,10 +14,13 @@ from app.models import (
     BookingCategory,
     BookingImage,
     Customer,
+    CustomerDevice,
+    CustomerOrderNotification,
     DeliveryZone,
     IikoMenuSnapshot,
     IikoToken,
     MenuItemContent,
+    Order,
     Organization,
     OrganizationWorkingHour,
     OtpChallenge,
@@ -26,6 +29,8 @@ from app.models import (
     StaffUser,
     Story,
     StorySlide,
+    TBankPayment,
+    TBankPaymentEvent,
 )
 from app.models.base import Base
 
@@ -35,10 +40,13 @@ _registered_models = (
     BookingCategory,
     BookingImage,
     Customer,
+    CustomerDevice,
+    CustomerOrderNotification,
     DeliveryZone,
     IikoMenuSnapshot,
     IikoToken,
     MenuItemContent,
+    Order,
     Organization,
     OrganizationWorkingHour,
     OtpChallenge,
@@ -47,6 +55,8 @@ _registered_models = (
     StaffUser,
     Story,
     StorySlide,
+    TBankPayment,
+    TBankPaymentEvent,
 )
 
 # this is the Alembic Config object, which provides

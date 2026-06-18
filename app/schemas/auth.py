@@ -40,6 +40,8 @@ class DeviceInfo(DeviceIdentity):
 
 class CustomerOtpRequest(BaseModel):
     phone: str
+    device_id: str | None = Field(default=None, min_length=8, max_length=128)
+    device_name: str | None = Field(default=None, max_length=255)
 
 
 class CustomerOtpVerify(DeviceInfo):

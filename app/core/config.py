@@ -59,15 +59,27 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 60
 
-    otp_ttl_seconds: int = 30
+    otp_ttl_seconds: int = 300
     otp_resend_cooldown_seconds: int = 60
     otp_max_attempts: int = 5
+    otp_delivery_provider: str = Field(
+        default="console",
+        validation_alias=AliasChoices("OTP_DELIVERY_PROVIDER", "OTP_AUTH_PROVIDER"),
+    )
     otp_dev_mode: bool = False
     otp_phone_cooldown_schedule_seconds: str = "30,60,900"
-    otp_phone_window_seconds: int = 24 * 60 * 60
+    otp_phone_window_seconds: int = 60 * 60
+    otp_phone_max_requests_per_window: int = 10
     otp_global_cooldown_seconds: int = 30
     otp_ip_window_seconds: int = 60 * 60
     otp_ip_max_requests_per_window: int = 10
+
+    greensms_auth_token: str | None = None
+    greensms_call_send_url: str = "https://api3.greensms.ru/call/send"
+    greensms_request_timeout_seconds: float = 10.0
+    greensms_call_voice: bool = False
+    greensms_call_lang: str = "ru"
+    greensms_call_tag: str | None = "mangalclubs-auth"
 
     cookie_secure: bool = True
 

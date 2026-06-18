@@ -17,6 +17,7 @@ from app.models.customer import Customer
 from app.models.staff import StaffUser
 from app.security.passwords import verify_password
 from app.security.tokens import create_access_token, generate_refresh_token, hash_token, now_utc
+from app.services.greensms import GreenSMSError, send_call_verification
 from app.services.otp import (
     InvalidPhoneNumberError,
     generate_otp_code,
@@ -49,9 +50,26 @@ def seconds_until(moment, current_time) -> int:
     return max(0, math.ceil((moment - current_time).total_seconds()))
 
 
-def otp_phone_cooldown_seconds(attempts: int) -> int:
-    schedule = settings.otp_phone_cooldown_schedule
-    return schedule[min(attempts, len(schedule) - 1)]
+def ensure_otp_delivery_provider() -> str:
+    provider = settings.otp_delivery_provider.strip().lower()
+    if provider in {"console", "dev", "test", "fake", "greensms", "call"}:
+        return provider
+
+    raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "OTP delivery provider is not supported")
+
+
+async def deliver_otp_code(phone: str) -> str:
+    provider = ensure_otp_delivery_provider()
+
+    if provider in {"greensms", "call"}:
+        try:
+            return (await send_call_verification(phone)).code
+        except GreenSMSError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OTP delivery service is unavailable") from exc
+
+    code = generate_otp_code()
+    print_fake_sms(phone, code)
+    return code
 
 
 async def get_or_create_otp_rate_limit(
@@ -170,10 +188,22 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
             resend_available_at=resend_available_at,
         )
 
+    if phone_rate_limit.attempts >= settings.otp_phone_max_requests_per_window:
+        resend_available_at = phone_rate_limit.window_started_at + timedelta(seconds=settings.otp_phone_window_seconds)
+        phone_rate_limit.blocked_until = resend_available_at
+        await db.commit()
+        return OtpRequestResult(
+            retry_after_seconds=seconds_until(resend_available_at, current_time),
+            resend_available_at=resend_available_at,
+        )
+
     phone_rate_limit.attempts += 1
-    phone_rate_limit.blocked_until = current_time + timedelta(
-        seconds=otp_phone_cooldown_seconds(phone_rate_limit.attempts - 1)
-    )
+    if phone_rate_limit.attempts >= settings.otp_phone_max_requests_per_window:
+        phone_rate_limit.blocked_until = phone_rate_limit.window_started_at + timedelta(
+            seconds=settings.otp_phone_window_seconds
+        )
+    else:
+        phone_rate_limit.blocked_until = current_time + timedelta(seconds=settings.otp_resend_cooldown_seconds)
 
     if ip_rate_limit:
         ip_rate_limit.attempts += 1
@@ -182,7 +212,7 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
         else:
             ip_rate_limit.blocked_until = current_time + timedelta(seconds=settings.otp_global_cooldown_seconds)
 
-    code = generate_otp_code()
+    code = await deliver_otp_code(phone)
     resend_available_at = max(
         rate_limit.blocked_until
         for rate_limit in (phone_rate_limit, ip_rate_limit)
@@ -199,7 +229,6 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
     )
     await db.commit()
 
-    print_fake_sms(phone, code)
     return OtpRequestResult(
         retry_after_seconds=seconds_until(resend_available_at, current_time),
         resend_available_at=resend_available_at,

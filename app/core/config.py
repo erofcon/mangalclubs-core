@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     mobile_soft_update_message: str = "Вышла новая версия приложения. Обновитесь, когда будет удобно."
 
     iiko_api_base_url: str = "https://api-ru.iiko.services"
+    iiko_app_id: str | None = None
+    iiko_client_secret: str | None = None
     iiko_auth_poll_seconds: int = 60
     iiko_menu_poll_seconds: int = 300
     iiko_token_refresh_margin_seconds: int = 120

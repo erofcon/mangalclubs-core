@@ -208,6 +208,9 @@ async def get_iiko_order_status(
             return build_local_order_status(local_order)
         iiko_order_id = local_order.iiko_order_id
         organization = local_order.organization
+        iiko_organization_id = local_order.iiko_organization_id
+        if organization.iiko_organization_id != iiko_organization_id:
+            return build_local_order_status(local_order)
     else:
         if customer is not None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Order not found")
@@ -217,6 +220,7 @@ async def get_iiko_order_status(
             organization_id=organization_id,
             organization_slug=organization_slug,
         )
+        iiko_organization_id = organization.iiko_organization_id
 
     access_token = await get_order_access_token(db, organization)
 
@@ -225,7 +229,7 @@ async def get_iiko_order_status(
             "/api/1/deliveries/by_id",
             access_token,
             json_body={
-                "organizationId": organization.iiko_organization_id,
+                "organizationId": iiko_organization_id,
                 "orderIds": [iiko_order_id],
             },
         )
@@ -259,7 +263,7 @@ async def get_iiko_order_status(
         "correlation_id": data.get("correlationId"),
         "organization_id": organization.id,
         "organization_slug": organization.slug,
-        "iiko_organization_id": organization.iiko_organization_id,
+        "iiko_organization_id": iiko_organization_id,
         "order_type": order_type,
         "iiko_order_id": iiko_order_id,
         "creation_status": order_info.get("creationStatus"),
@@ -710,7 +714,14 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
 
     organization = local_order.organization
     access_token = await get_order_access_token(db, organization)
-    terminal_group_id = local_order.terminal_group_id or await get_order_terminal_group_id(access_token, organization)
+    terminal_group_id = local_order.terminal_group_id
+    if not terminal_group_id:
+        if local_order.iiko_organization_id != organization.iiko_organization_id:
+            local_order.creation_status = "IikoCreateFailed"
+            local_order.error_info = {"message": "Order belongs to a previous iiko organization configuration"}
+            await db.commit()
+            return False
+        terminal_group_id = await get_order_terminal_group_id(access_token, organization)
     order_body = dict(local_order.iiko_order_payload)
 
     try:
@@ -718,7 +729,7 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
             "/api/1/deliveries/create",
             access_token,
             json_body={
-                "organizationId": organization.iiko_organization_id,
+                "organizationId": local_order.iiko_organization_id,
                 "terminalGroupId": terminal_group_id,
                 "order": order_body,
             },
@@ -757,9 +768,11 @@ async def dispatch_paid_orders_once() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.scalars(
             select(Order.id)
+            .join(Order.organization)
             .where(
                 Order.payment_status == "paid",
                 Order.iiko_order_id.is_(None),
+                Order.iiko_organization_id == Organization.iiko_organization_id,
                 Order.creation_status.in_(PAID_IIKO_RETRY_STATUSES),
             )
             .order_by(Order.updated_at)
@@ -791,9 +804,11 @@ async def sync_active_iiko_order_statuses_once() -> None:
     async with AsyncSessionLocal() as db:
         result = await db.scalars(
             select(Order.id)
+            .join(Order.organization)
             .where(
                 Order.customer_id.is_not(None),
                 Order.iiko_order_id.is_not(None),
+                Order.iiko_organization_id == Organization.iiko_organization_id,
                 or_(Order.order_status.is_(None), Order.order_status.not_in(FINAL_ORDER_STATUSES)),
             )
             .order_by(Order.updated_at)

@@ -215,13 +215,21 @@ async def get_alive_iiko_terminal_group_id(access_token: str, iiko_organization_
     raise IikoTerminalError("iiko terminal is not alive")
 
 
-async def request_iiko_access_token(api_login: str) -> tuple[str, str | None, datetime]:
-    url = f"{settings.iiko_api_base_url.rstrip('/')}/api/1/access_token"
+async def request_iiko_access_token(api_key: str) -> tuple[str, str | None, datetime]:
+    if not settings.iiko_app_id or not settings.iiko_client_secret:
+        raise IikoAuthorizationError("iiko v2 auth requires IIKO_APP_ID and IIKO_CLIENT_SECRET")
+
+    url = f"{settings.iiko_api_base_url.rstrip('/')}/api/v2/access_token"
     timeout = httpx.Timeout(settings.iiko_request_timeout_seconds)
+    payload = {
+        "apiKey": api_key,
+        "appId": settings.iiko_app_id,
+        "clientSecret": settings.iiko_client_secret,
+    }
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, json={"apiLogin": api_login})
+            response = await client.post(url, json=payload)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500]
@@ -293,7 +301,7 @@ async def get_valid_token(db: AsyncSession, organization_id: UUID) -> str:
         raise IikoAuthorizationError("Organization not found")
 
     if not organization.iiko_api_login:
-        raise IikoAuthorizationError("Organization does not have iiko apiLogin")
+        raise IikoAuthorizationError("Organization does not have iiko api key")
 
     if should_refresh(organization.iiko_token):
         token = await authorize_organization(db, organization)

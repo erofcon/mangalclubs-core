@@ -144,7 +144,7 @@ async def update_organization(
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, "Organization already exists")
 
-    if "iiko_api_login" in data:
+    if "iiko_api_login" in data or "iiko_organization_id" in data:
         if organization.iiko_api_login:
             await authorize_organization(db, organization)
         elif organization.iiko_token:

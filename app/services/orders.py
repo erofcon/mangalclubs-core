@@ -1563,10 +1563,10 @@ def select_menu_item_size(
 def select_menu_price(item_size: dict[str, Any], iiko_organization_id: str) -> float | None:
     prices = [price for price in item_size.get("prices") or [] if isinstance(price, dict)]
     for price in prices:
-        if str(price.get("organizationId")) == iiko_organization_id:
+        if optional_str(price.get("organizationId")) == iiko_organization_id:
             return parse_float(price.get("price"))
 
-    if len(prices) == 1:
+    if len(prices) == 1 and not optional_str(prices[0].get("organizationId")):
         return parse_float(prices[0].get("price"))
 
     return None

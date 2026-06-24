@@ -264,6 +264,18 @@ async def get_or_create_iiko_token(db: AsyncSession, organization_id: UUID) -> I
     return token
 
 
+async def invalidate_iiko_token(db: AsyncSession, organization_id: UUID, reason: str) -> None:
+    token = await db.scalar(select(IikoToken).where(IikoToken.organization_id == organization_id))
+    if token is None:
+        return
+
+    token.access_token = None
+    token.correlation_id = None
+    token.expires_at = None
+    token.last_error = reason
+    await db.commit()
+
+
 async def authorize_organization(db: AsyncSession, organization: Organization) -> IikoToken | None:
     if not organization.iiko_api_login:
         return None
@@ -354,6 +366,10 @@ async def refresh_iiko_tokens_once() -> None:
             .options(selectinload(Organization.iiko_token))
             .where(
                 Organization.iiko_api_login.is_not(None),
+                or_(
+                    Organization.accepts_pickup.is_(True),
+                    Organization.accepts_delivery.is_(True),
+                ),
                 or_(
                     IikoToken.id.is_(None),
                     IikoToken.access_token.is_(None),

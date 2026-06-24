@@ -6,7 +6,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ from app.models.base import utcnow
 from app.models.menu import IikoMenuSnapshot, MenuItemContent
 from app.models.organization import Organization
 from app.schemas.menu import MenuItemContentCreate, MenuItemContentUpdate, OrderType
-from app.services.iiko import IikoAuthorizationError, get_valid_token
+from app.services.iiko import IikoAuthorizationError, get_valid_token, invalidate_iiko_token
 from app.services.media import delete_local_media_file, save_media_upload
 
 
@@ -30,6 +30,10 @@ MENU_UNAVAILABLE_MESSAGE = "Menu is temporarily unavailable"
 
 class IikoMenuError(Exception):
     pass
+
+
+def is_organization_denied_error(exc: Exception) -> bool:
+    return "ORGANIZATION_DENIED" in str(exc)
 
 
 async def request_iiko_external_menus(access_token: str) -> list[dict]:
@@ -96,9 +100,30 @@ async def sync_iiko_menu_for_organization(db: AsyncSession, organization: Organi
         raise IikoMenuError(snapshot.last_error)
 
     try:
-        access_token = await get_valid_token(db, organization_id)
-        external_menu = await get_first_external_menu(access_token)
-        raw_menu = await request_iiko_menu_by_id(access_token, external_menu["id"], iiko_organization_id)
+        external_menu, raw_menu = await fetch_iiko_menu_for_organization(
+            db,
+            organization_id=organization_id,
+            iiko_organization_id=iiko_organization_id,
+        )
+    except IikoMenuError as exc:
+        if not is_organization_denied_error(exc):
+            snapshot.last_error = str(exc)
+            await db.commit()
+            raise IikoMenuError(str(exc)) from exc
+
+        logger.info("Refreshing stale iiko token after organization denied for organization %s", organization_id)
+        await invalidate_iiko_token(db, organization_id, str(exc))
+
+        try:
+            external_menu, raw_menu = await fetch_iiko_menu_for_organization(
+                db,
+                organization_id=organization_id,
+                iiko_organization_id=iiko_organization_id,
+            )
+        except (IikoAuthorizationError, IikoMenuError) as retry_exc:
+            snapshot.last_error = str(retry_exc)
+            await db.commit()
+            raise IikoMenuError(str(retry_exc)) from retry_exc
     except (IikoAuthorizationError, IikoMenuError) as exc:
         snapshot.last_error = str(exc)
         await db.commit()
@@ -113,6 +138,18 @@ async def sync_iiko_menu_for_organization(db: AsyncSession, organization: Organi
     await db.commit()
     await db.refresh(snapshot)
     return snapshot
+
+
+async def fetch_iiko_menu_for_organization(
+    db: AsyncSession,
+    *,
+    organization_id: UUID,
+    iiko_organization_id: str,
+) -> tuple[dict[str, str | None], dict]:
+    access_token = await get_valid_token(db, organization_id)
+    external_menu = await get_first_external_menu(access_token)
+    raw_menu = await request_iiko_menu_by_id(access_token, external_menu["id"], iiko_organization_id)
+    return external_menu, raw_menu
 
 
 async def get_first_external_menu(access_token: str) -> dict[str, str | None]:
@@ -357,6 +394,9 @@ def build_menu_response(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Organization iiko id is not configured")
 
     raw_menu = snapshot.raw_menu or {}
+    if not raw_menu_supports_iiko_organization(raw_menu, organization.iiko_organization_id):
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, MENU_UNAVAILABLE_MESSAGE)
+
     iiko_item_content = {content.iiko_item_id: content for content in contents if content.iiko_item_id}
     sku_content = {content.sku: content for content in contents if content.sku}
     categories = []
@@ -472,10 +512,10 @@ def select_item_size(item: dict, iiko_organization_id: str) -> dict | None:
 def select_price(item_size: dict, iiko_organization_id: str) -> float | None:
     prices = [price for price in item_size.get("prices") or [] if isinstance(price, dict)]
     for price in prices:
-        if str(price.get("organizationId")) == iiko_organization_id:
+        if to_optional_str(price.get("organizationId")) == iiko_organization_id:
             return parse_float(price.get("price"))
 
-    if len(prices) == 1:
+    if len(prices) == 1 and not to_optional_str(prices[0].get("organizationId")):
         return parse_float(prices[0].get("price"))
 
     return None
@@ -490,6 +530,34 @@ def select_nutrition(item_size: dict, iiko_organization_id: str) -> dict:
 
     nutrition_per_hundred = item_size.get("nutritionPerHundredGrams")
     return nutrition_per_hundred if isinstance(nutrition_per_hundred, dict) else {}
+
+
+def raw_menu_supports_iiko_organization(raw_menu: dict, iiko_organization_id: str) -> bool:
+    has_unscoped_price = False
+    has_scoped_price = False
+
+    for category in raw_menu.get("itemCategories") or []:
+        if not isinstance(category, dict):
+            continue
+        for item in category.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            for item_size in item.get("itemSizes") or []:
+                if not isinstance(item_size, dict):
+                    continue
+                for price in item_size.get("prices") or []:
+                    if not isinstance(price, dict):
+                        continue
+
+                    price_organization_id = to_optional_str(price.get("organizationId"))
+                    if price_organization_id == iiko_organization_id:
+                        return True
+                    if price_organization_id:
+                        has_scoped_price = True
+                    else:
+                        has_unscoped_price = True
+
+    return has_unscoped_price and not has_scoped_price
 
 
 def format_weight(value) -> str | None:
@@ -536,6 +604,10 @@ async def refresh_iiko_menus_once() -> None:
             .where(
                 Organization.iiko_api_login.is_not(None),
                 Organization.iiko_organization_id.is_not(None),
+                or_(
+                    Organization.accepts_pickup.is_(True),
+                    Organization.accepts_delivery.is_(True),
+                ),
             )
             .order_by(Organization.name)
         )

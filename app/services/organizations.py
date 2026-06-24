@@ -24,7 +24,11 @@ MAX_PHOTO_SIZE_BYTES = 8 * 1024 * 1024
 
 
 def organization_query():
-    return select(Organization).options(selectinload(Organization.working_hours), selectinload(Organization.iiko_token))
+    return select(Organization).options(
+        selectinload(Organization.working_hours),
+        selectinload(Organization.iiko_token),
+        selectinload(Organization.iiko_menu_snapshot),
+    )
 
 
 async def list_organizations(db: AsyncSession) -> list[Organization]:
@@ -98,6 +102,7 @@ async def update_organization(
     payload: OrganizationUpdate,
 ) -> Organization:
     organization = await get_organization_by_id(db, organization_id)
+    previous_iiko_organization_id = organization.iiko_organization_id
     data = payload.model_dump(exclude_unset=True)
 
     for field in (
@@ -132,6 +137,15 @@ async def update_organization(
 
     if payload.working_hours is not None:
         replace_working_hours(organization, payload.working_hours)
+
+    if (
+        "iiko_organization_id" in data
+        and organization.iiko_organization_id != previous_iiko_organization_id
+        and organization.iiko_menu_snapshot is not None
+    ):
+        organization.iiko_menu_snapshot.last_error = (
+            "iiko organization id changed; waiting for menu sync with the new organization"
+        )
 
     validate_organization_delivery_settings(organization)
 

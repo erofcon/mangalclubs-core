@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     media_root: str = "media"
     media_url: str = "/media"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    log_level: str = "INFO"
+    log_dir: str = "logs"
+    log_file_name: str = "app.log"
+    log_retention_days: int = 14
+    log_to_file: bool = True
 
     mobile_android_min_supported_build: int = 1
     mobile_android_latest_build: int = 1

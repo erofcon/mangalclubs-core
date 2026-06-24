@@ -142,6 +142,7 @@ async def create_order_payment(
         local_order.payment_error_info = {"message": str(exc)}
         local_order.creation_status = "PaymentInitFailed"
         await db.commit()
+        logger.warning("T-Bank payment init failed for order %s: %s", local_order.id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"T-Bank payment init failed: {exc}") from exc
 
     payment.bank_payment_id = optional_str(data.get("PaymentId"))
@@ -157,6 +158,15 @@ async def create_order_payment(
     await db.refresh(local_order)
     await ensure_order_notification(db, local_order, "order_created")
     await db.commit()
+    logger.info(
+        "Order payment created: order_id=%s public_number=%s organization_id=%s payment_id=%s status=%s amount_kopecks=%s",
+        local_order.id,
+        local_order.public_number,
+        organization.id,
+        payment.id,
+        payment.status,
+        amount_kopecks,
+    )
 
     return {
         "id": local_order.id,
@@ -595,8 +605,17 @@ async def handle_tbank_webhook(db: AsyncSession, payload: dict[str, Any]) -> Non
 
     if not token_valid or payment is None:
         await db.commit()
+        logger.warning(
+            "Ignored T-Bank webhook: bank_order_id=%s bank_payment_id=%s token_valid=%s payment_found=%s error=%s",
+            bank_order_id,
+            bank_payment_id,
+            token_valid,
+            payment is not None,
+            error_info,
+        )
         return
 
+    previous_payment_status = payment.status
     next_status = map_tbank_status(status_value)
     payment.last_notification = payload
     if bank_payment_id and not payment.bank_payment_id:
@@ -616,6 +635,14 @@ async def handle_tbank_webhook(db: AsyncSession, payload: dict[str, Any]) -> Non
         order.creation_status = "PaymentFailed"
 
     await db.commit()
+    if previous_payment_status != payment.status:
+        logger.info(
+            "T-Bank webhook updated payment: order_id=%s payment_id=%s status=%s order_payment_status=%s",
+            order.id,
+            payment.id,
+            payment.status,
+            order.payment_status,
+        )
 
     if order.payment_status == "paid":
         try:
@@ -700,6 +727,7 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
         local_order.creation_status = "IikoCreateFailed"
         local_order.error_info = {"message": str(exc)}
         await db.commit()
+        logger.warning("iiko order creation failed for order %s: %s", local_order.id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"iiko order creation failed: {exc}") from exc
 
     order_info = data.get("orderInfo")
@@ -708,12 +736,20 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
         local_order.error_info = {"message": "iiko did not return orderInfo"}
         local_order.iiko_create_response = data
         await db.commit()
+        logger.warning("iiko order creation returned invalid response for order %s", local_order.id)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "iiko did not return orderInfo")
 
     update_local_order_from_create_response(local_order, data, order_info)
     if local_order.iiko_order_id:
         await ensure_order_notification(db, local_order, "order_created")
     await db.commit()
+    logger.info(
+        "Paid order dispatched to iiko: order_id=%s public_number=%s iiko_order_id=%s creation_status=%s",
+        local_order.id,
+        local_order.public_number,
+        local_order.iiko_order_id,
+        local_order.creation_status,
+    )
     return True
 
 
@@ -869,6 +905,7 @@ async def sync_tbank_payment_state(db: AsyncSession, payment_id) -> None:
     )
     db.add(event)
 
+    previous_payment_status = payment.status
     payment.last_notification = state
     order = payment.order
     payment.status = next_status
@@ -883,6 +920,14 @@ async def sync_tbank_payment_state(db: AsyncSession, payment_id) -> None:
         order.creation_status = "PaymentFailed"
 
     await db.commit()
+    if previous_payment_status != payment.status:
+        logger.info(
+            "T-Bank poll updated payment: order_id=%s payment_id=%s status=%s order_payment_status=%s",
+            order.id,
+            payment.id,
+            payment.status,
+            order.payment_status,
+        )
 
     if order.payment_status == "paid":
         await dispatch_paid_order_to_iiko(db, order.id)
@@ -920,6 +965,7 @@ async def expire_overdue_unpaid_orders(db: AsyncSession, *, customer_id=None, li
 
     if expired_count:
         await db.commit()
+        logger.info("Expired overdue unpaid orders: count=%s", expired_count)
 
     return expired_count
 

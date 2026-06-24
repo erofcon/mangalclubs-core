@@ -15,8 +15,10 @@ from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.stories import router as stories_router
 from app.core.config import settings
+from app.core.logging import configure_logging
 
 
+configure_logging()
 app = FastAPI(title=settings.app_name)
 
 app.add_middleware(

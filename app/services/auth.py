@@ -1,4 +1,5 @@
 import math
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -29,8 +30,15 @@ from app.services.otp import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 OTP_RATE_LIMIT_PHONE_SCOPE = "phone"
 OTP_RATE_LIMIT_IP_SCOPE = "ip"
+
+
+def mask_phone(phone: str) -> str:
+    return f"***{phone[-4:]}" if len(phone) >= 4 else "***"
 
 
 @dataclass(frozen=True)
@@ -183,6 +191,7 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
 
     if blocked_until_values:
         resend_available_at = max(blocked_until_values)
+        logger.info("OTP request throttled for phone %s from ip %s", mask_phone(phone), ip_address)
         return OtpRequestResult(
             retry_after_seconds=seconds_until(resend_available_at, current_time),
             resend_available_at=resend_available_at,
@@ -192,6 +201,7 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
         resend_available_at = phone_rate_limit.window_started_at + timedelta(seconds=settings.otp_phone_window_seconds)
         phone_rate_limit.blocked_until = resend_available_at
         await db.commit()
+        logger.warning("OTP phone rate limit exceeded for phone %s", mask_phone(phone))
         return OtpRequestResult(
             retry_after_seconds=seconds_until(resend_available_at, current_time),
             resend_available_at=resend_available_at,
@@ -228,6 +238,7 @@ async def request_customer_otp(db: AsyncSession, phone_raw: str, *, ip_address: 
         )
     )
     await db.commit()
+    logger.info("OTP challenge created for phone %s via %s", mask_phone(phone), ensure_otp_delivery_provider())
 
     return OtpRequestResult(
         retry_after_seconds=seconds_until(resend_available_at, current_time),
@@ -259,11 +270,13 @@ async def verify_customer_otp_and_issue_tokens(
     )
 
     if not challenge or challenge.attempts_left <= 0:
+        logger.warning("OTP verification failed for phone %s: no active challenge", mask_phone(phone))
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
 
     if not verify_otp(phone, code, challenge.code_hash):
         challenge.attempts_left -= 1
         await db.commit()
+        logger.warning("OTP verification failed for phone %s: invalid code", mask_phone(phone))
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired code")
 
     challenge.consumed_at = utcnow()
@@ -285,6 +298,7 @@ async def verify_customer_otp_and_issue_tokens(
         user_agent=user_agent,
     )
     await db.commit()
+    logger.info("Customer authenticated by OTP: customer_id=%s", customer.id)
 
     return tokens, customer
 
@@ -302,9 +316,11 @@ async def staff_login_and_issue_tokens(
     staff = await db.scalar(select(StaffUser).where(StaffUser.email == email.lower()))
 
     if not staff or not verify_password(password, staff.password_hash):
+        logger.warning("Staff login failed for email %s from ip %s", email.lower(), ip_address)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
 
     if not staff.is_active:
+        logger.warning("Inactive staff login attempt: staff_id=%s email=%s", staff.id, staff.email)
         raise HTTPException(status.HTTP_403_FORBIDDEN, "User is inactive")
 
     tokens = await issue_tokens(
@@ -318,6 +334,7 @@ async def staff_login_and_issue_tokens(
         user_agent=user_agent,
     )
     await db.commit()
+    logger.info("Staff authenticated: staff_id=%s email=%s", staff.id, staff.email)
 
     return tokens, staff
 

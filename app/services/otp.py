@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 import random
 from datetime import timedelta
 
@@ -7,6 +8,9 @@ import phonenumbers
 
 from app.core.config import settings
 from app.security.tokens import now_utc
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidPhoneNumberError(ValueError):
@@ -40,7 +44,7 @@ def verify_otp(phone: str, code: str, expected_hash: str) -> bool:
 
 def print_fake_sms(phone: str, code: str) -> None:
     if settings.otp_dev_mode:
-        print(f"[DEV SMS] OTP for {phone}: {code}")
+        logger.warning("[DEV SMS] OTP for %s: %s", phone, code)
 
 
 def otp_expires_at():

@@ -4,6 +4,7 @@ import signal
 from contextlib import suppress
 
 from app.core.config import settings
+from app.core.logging import configure_logging
 from app.services.iiko import run_iiko_token_refresher
 from app.services.menu import run_iiko_menu_refresher
 from app.services.orders import (
@@ -49,7 +50,7 @@ async def run_worker() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     asyncio.run(run_worker())
 
 

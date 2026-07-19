@@ -492,7 +492,107 @@ def normalize_iiko_item(
         "size_id": to_optional_str(item_size.get("sizeId")),
         "size_name": to_optional_str(item_size.get("sizeName")),
         "measure_unit_type": to_optional_str(item_size.get("measureUnitType")),
-        "modifiers": [group for group in item_size.get("itemModifierGroups") or [] if isinstance(group, dict)],
+        "modifiers": normalize_modifier_groups(item_size, iiko_organization_id),
+    }
+
+
+def normalize_modifier_groups(item_size: dict, iiko_organization_id: str) -> list[dict]:
+    groups = []
+    for group in item_size.get("itemModifierGroups") or []:
+        if not isinstance(group, dict) or group.get("isHidden") or group.get("isDeleted"):
+            continue
+
+        group_id = to_optional_str(group.get("itemGroupId") or group.get("id") or group.get("sku") or group.get("name"))
+        if not group_id:
+            continue
+
+        items = normalize_modifier_items(group, group_id, iiko_organization_id)
+        if not items:
+            continue
+
+        restrictions = normalize_modifier_restrictions(group.get("restrictions"))
+        child_modifiers_have_min_max_restrictions = bool(
+            group.get("childModifiersHaveMinMaxRestrictions")
+        )
+        groups.append(
+            {
+                "id": group_id,
+                "product_group_id": group_id,
+                "sku": to_optional_str(group.get("sku")),
+                "name": str(group.get("name") or ""),
+                "description": str(group.get("description") or ""),
+                "required": is_modifier_group_required(
+                    group,
+                    restrictions,
+                    child_modifiers_have_min_max_restrictions,
+                ),
+                "min_quantity": restrictions["min_quantity"],
+                "max_quantity": restrictions["max_quantity"],
+                "free_quantity": restrictions["free_quantity"],
+                "by_default": restrictions["by_default"],
+                "hide_if_default_quantity": restrictions["hide_if_default_quantity"],
+                "can_be_divided": bool(group.get("canBeDivided")),
+                "child_modifiers_have_min_max_restrictions": child_modifiers_have_min_max_restrictions,
+                "items": items,
+            }
+        )
+
+    return groups
+
+
+def normalize_modifier_items(group: dict, group_id: str, iiko_organization_id: str) -> list[dict]:
+    items = []
+    for item in group.get("items") or []:
+        if not isinstance(item, dict) or item.get("isHidden") or item.get("isDeleted"):
+            continue
+
+        item_id = to_optional_str(item.get("itemId") or item.get("id"))
+        if not item_id:
+            continue
+
+        restrictions = normalize_modifier_restrictions(item.get("restrictions"))
+        price = select_price(item, iiko_organization_id)
+        items.append(
+            {
+                "id": item_id,
+                "product_id": item_id,
+                "product_group_id": group_id,
+                "sku": to_optional_str(item.get("sku")),
+                "name": str(item.get("name") or ""),
+                "description": str(item.get("description") or ""),
+                "price": price if price is not None else 0,
+                "default_amount": restrictions["by_default"],
+                "restrictions": restrictions,
+                "position": parse_int(item.get("position")),
+                "image": to_optional_str(item.get("buttonImageUrl")),
+                "measure_unit_type": to_optional_str(item.get("measureUnitType")),
+            }
+        )
+
+    return sorted(items, key=lambda item: item["position"] if item["position"] is not None else 0)
+
+
+def is_modifier_group_required(
+    group: dict,
+    restrictions: dict[str, float | bool | None],
+    child_modifiers_have_min_max_restrictions: bool,
+) -> bool:
+    for key in ("required", "isRequired"):
+        value = group.get(key)
+        if isinstance(value, bool):
+            return value
+
+    return bool(restrictions["min_quantity"] and restrictions["min_quantity"] > 0)
+
+
+def normalize_modifier_restrictions(value) -> dict[str, float | bool | None]:
+    restrictions = value if isinstance(value, dict) else {}
+    return {
+        "min_quantity": parse_float(restrictions.get("minQuantity")) or 0,
+        "max_quantity": parse_float(restrictions.get("maxQuantity")),
+        "free_quantity": parse_float(restrictions.get("freeQuantity")) or 0,
+        "by_default": parse_float(restrictions.get("byDefault")) or 0,
+        "hide_if_default_quantity": bool(restrictions.get("hideIfDefaultQuantity")),
     }
 
 

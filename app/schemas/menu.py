@@ -13,6 +13,49 @@ class MenuCategoryOut(BaseModel):
     title: str
 
 
+class MenuModifierRestrictionsOut(BaseModel):
+    min_quantity: float = Field(serialization_alias="minQuantity")
+    max_quantity: float | None = Field(default=None, serialization_alias="maxQuantity")
+    free_quantity: float = Field(serialization_alias="freeQuantity")
+    by_default: float = Field(serialization_alias="byDefault")
+    hide_if_default_quantity: bool = Field(serialization_alias="hideIfDefaultQuantity")
+
+
+class MenuModifierItemOut(BaseModel):
+    id: str
+    product_id: str = Field(serialization_alias="productId")
+    product_group_id: str | None = Field(default=None, serialization_alias="productGroupId")
+    sku: str | None = None
+    name: str
+    description: str = ""
+    price: float = 0
+    default_amount: float = Field(default=0, serialization_alias="defaultAmount")
+    restrictions: MenuModifierRestrictionsOut
+    position: int | None = None
+    image: str | None = None
+    measure_unit_type: str | None = Field(default=None, serialization_alias="measureUnitType")
+
+
+class MenuModifierGroupOut(BaseModel):
+    id: str
+    product_group_id: str = Field(serialization_alias="productGroupId")
+    sku: str | None = None
+    name: str
+    description: str = ""
+    required: bool
+    min_quantity: float = Field(serialization_alias="minQuantity")
+    max_quantity: float | None = Field(default=None, serialization_alias="maxQuantity")
+    free_quantity: float = Field(serialization_alias="freeQuantity")
+    by_default: float = Field(serialization_alias="byDefault")
+    hide_if_default_quantity: bool = Field(serialization_alias="hideIfDefaultQuantity")
+    can_be_divided: bool = Field(default=False, serialization_alias="canBeDivided")
+    child_modifiers_have_min_max_restrictions: bool = Field(
+        default=False,
+        serialization_alias="childModifiersHaveMinMaxRestrictions",
+    )
+    items: list[MenuModifierItemOut] = Field(default_factory=list)
+
+
 class MenuItemOut(BaseModel):
     id: str
     sku: str | None = None
@@ -28,7 +71,7 @@ class MenuItemOut(BaseModel):
     size_id: str | None = None
     size_name: str | None = None
     measure_unit_type: str | None = None
-    modifiers: list[dict[str, Any]] = Field(default_factory=list)
+    modifiers: list[MenuModifierGroupOut] = Field(default_factory=list)
 
 
 class MenuCategoryWithItemsOut(MenuCategoryOut):

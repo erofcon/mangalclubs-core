@@ -20,7 +20,7 @@ from app.models.customer import Customer
 from app.models.menu import MenuItemContent
 from app.models.order import CustomerOrderNotification, Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
-from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind
+from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind, OrderModifierIn
 from app.services.availability import ensure_organization_accepts_orders_now
 from app.services.delivery import ensure_delivery_available_for_coordinates
 from app.services.iiko import (
@@ -1122,7 +1122,7 @@ async def create_local_order(
         complete_before=payload.complete_before,
         guests_count=payload.guests_count,
         delivery_point=build_local_delivery_point(payload, delivery_calculation),
-        items=[item.model_dump(by_alias=True) for item in payload.items],
+        items=list(order_body.get("items") or [item.model_dump(by_alias=True) for item in payload.items]),
         iiko_order_payload=order_body,
         payment_status="payment_pending",
         payment_amount_kopecks=amount_kopecks,
@@ -1487,20 +1487,10 @@ def build_iiko_item(organization: Organization, item: OrderItemIn) -> dict[str, 
         result["productSizeId"] = product_size_id
     if item.comment:
         result["comment"] = item.comment
-    if item.modifiers:
-        result["modifiers"] = [
-            {
-                key: value
-                for key, value in {
-                    "productId": modifier.product_id,
-                    "productGroupId": modifier.product_group_id,
-                    "amount": modifier.amount,
-                    "price": modifier.price,
-                }.items()
-                if value is not None
-            }
-            for modifier in item.modifiers
-        ]
+
+    modifiers = build_iiko_modifiers(organization, item, menu_item)
+    if modifiers:
+        result["modifiers"] = modifiers
 
     return result
 
@@ -1535,9 +1525,218 @@ def find_menu_item(
             return {
                 "price": price,
                 "productSizeId": optional_str(item_size.get("sizeId")),
+                "itemSize": item_size,
             }
 
     return None
+
+
+def build_iiko_modifiers(
+    organization: Organization,
+    item: OrderItemIn,
+    menu_item: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not item.modifiers and (not menu_item or not organization.iiko_organization_id):
+        return []
+
+    if not menu_item or not organization.iiko_organization_id:
+        return build_unresolved_iiko_modifiers(item)
+
+    item_size = menu_item.get("itemSize")
+    if not isinstance(item_size, dict):
+        return build_unresolved_iiko_modifiers(item)
+
+    groups = build_menu_modifier_groups(item_size, organization.iiko_organization_id)
+    if not groups:
+        if not item.modifiers:
+            return []
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Product {item.product_id} does not support modifiers",
+        )
+
+    resolved_modifiers = []
+    group_totals = {group_id: 0.0 for group_id in groups}
+    child_totals: dict[tuple[str, str], float] = {}
+
+    for modifier in item.modifiers:
+        resolved = resolve_iiko_modifier(modifier, groups)
+        group_id = resolved["productGroupId"]
+        product_id = resolved["productId"]
+        amount = float(resolved["amount"])
+        child_key = (group_id, product_id)
+        child_totals[child_key] = child_totals.get(child_key, 0.0) + amount
+        resolved_modifiers.append(resolved)
+
+    for (group_id, product_id), amount in child_totals.items():
+        modifier_info = groups[group_id]["items"][product_id]
+        validate_modifier_quantity(
+            amount,
+            modifier_info["restrictions"],
+            f"Modifier {product_id}",
+        )
+        if groups[group_id]["child_modifiers_have_min_max_restrictions"]:
+            group_totals[group_id] = group_totals.get(group_id, 0.0) + 1
+        else:
+            group_totals[group_id] = group_totals.get(group_id, 0.0) + amount
+
+    for group_id, group_info in groups.items():
+        validate_modifier_group_quantity(
+            group_totals.get(group_id, 0.0),
+            group_info,
+            f"Modifier group {group_id}",
+        )
+
+    return resolved_modifiers
+
+
+def build_unresolved_iiko_modifiers(item: OrderItemIn) -> list[dict[str, Any]]:
+    modifiers = []
+    for modifier in item.modifiers:
+        if modifier.price is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Price for modifier {modifier.product_id} was not found in menu",
+            )
+        modifiers.append(
+            {
+                key: value
+                for key, value in {
+                    "productId": modifier.product_id,
+                    "productGroupId": modifier.product_group_id,
+                    "amount": modifier.amount,
+                    "price": modifier.price,
+                }.items()
+                if value is not None
+            }
+        )
+    return modifiers
+
+
+def build_menu_modifier_groups(item_size: dict[str, Any], iiko_organization_id: str) -> dict[str, dict[str, Any]]:
+    groups = {}
+    for group in item_size.get("itemModifierGroups") or []:
+        if not isinstance(group, dict) or group.get("isHidden") or group.get("isDeleted"):
+            continue
+
+        group_id = optional_str(group.get("itemGroupId") or group.get("id") or group.get("sku") or group.get("name"))
+        if not group_id:
+            continue
+
+        items = {}
+        for modifier in group.get("items") or []:
+            if not isinstance(modifier, dict) or modifier.get("isHidden") or modifier.get("isDeleted"):
+                continue
+            product_id = optional_str(modifier.get("itemId") or modifier.get("id"))
+            if not product_id:
+                continue
+            price = select_menu_price(modifier, iiko_organization_id)
+            items[product_id] = {
+                "price": price if price is not None else 0,
+                "restrictions": parse_iiko_modifier_restrictions(modifier.get("restrictions")),
+            }
+
+        if items:
+            restrictions = parse_iiko_modifier_restrictions(group.get("restrictions"))
+            child_modifiers_have_min_max_restrictions = bool(
+                group.get("childModifiersHaveMinMaxRestrictions")
+            )
+            groups[group_id] = {
+                "required": is_iiko_modifier_group_required(
+                    group,
+                    restrictions,
+                    child_modifiers_have_min_max_restrictions,
+                ),
+                "restrictions": restrictions,
+                "child_modifiers_have_min_max_restrictions": child_modifiers_have_min_max_restrictions,
+                "items": items,
+            }
+
+    return groups
+
+
+def resolve_iiko_modifier(
+    modifier: OrderModifierIn,
+    groups: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if modifier.product_group_id:
+        group = groups.get(modifier.product_group_id)
+        if not group or modifier.product_id not in group["items"]:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Modifier {modifier.product_id} is not available in group {modifier.product_group_id}",
+            )
+        group_id = modifier.product_group_id
+        modifier_info = group["items"][modifier.product_id]
+    else:
+        matches = [
+            (group_id, group["items"][modifier.product_id])
+            for group_id, group in groups.items()
+            if modifier.product_id in group["items"]
+        ]
+        if not matches:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Modifier {modifier.product_id} is not available for this product",
+            )
+        if len(matches) > 1:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"productGroupId is required for modifier {modifier.product_id}",
+            )
+        group_id, modifier_info = matches[0]
+
+    return {
+        "productId": modifier.product_id,
+        "productGroupId": group_id,
+        "amount": modifier.amount,
+        "price": float(modifier_info["price"]),
+    }
+
+
+def is_iiko_modifier_group_required(
+    group: dict[str, Any],
+    restrictions: dict[str, float | None],
+    child_modifiers_have_min_max_restrictions: bool,
+) -> bool:
+    for key in ("required", "isRequired"):
+        value = group.get(key)
+        if isinstance(value, bool):
+            return value
+
+    return bool(restrictions["min_quantity"] and restrictions["min_quantity"] > 0)
+
+
+def validate_modifier_quantity(amount: float, restrictions: dict[str, float | None], label: str) -> None:
+    min_quantity = restrictions["min_quantity"]
+    max_quantity = restrictions["max_quantity"]
+
+    if amount < min_quantity:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{label} requires at least {min_quantity:g}",
+        )
+    if max_quantity is not None and amount > max_quantity:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{label} allows at most {max_quantity:g}",
+        )
+
+
+def validate_modifier_group_quantity(amount: float, group_info: dict[str, Any], label: str) -> None:
+    restrictions = dict(group_info["restrictions"])
+    if not group_info["required"]:
+        restrictions["min_quantity"] = 0
+
+    validate_modifier_quantity(amount, restrictions, label)
+
+
+def parse_iiko_modifier_restrictions(value: Any) -> dict[str, float | None]:
+    restrictions = value if isinstance(value, dict) else {}
+    return {
+        "min_quantity": parse_float(restrictions.get("minQuantity")) or 0,
+        "max_quantity": parse_float(restrictions.get("maxQuantity")),
+    }
 
 
 def select_menu_item_size(

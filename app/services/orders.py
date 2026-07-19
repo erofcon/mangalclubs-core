@@ -722,7 +722,9 @@ async def dispatch_paid_order_to_iiko(db: AsyncSession, order_id) -> bool:
             await db.commit()
             return False
         terminal_group_id = await get_order_terminal_group_id(access_token, organization)
-    order_body = dict(local_order.iiko_order_payload)
+    order_body = sanitize_iiko_order_payload(local_order.iiko_order_payload)
+    if order_body != local_order.iiko_order_payload:
+        local_order.iiko_order_payload = order_body
 
     try:
         data = await request_iiko_json(
@@ -1561,7 +1563,7 @@ def build_iiko_modifiers(
 
     for modifier in item.modifiers:
         resolved = resolve_iiko_modifier(modifier, groups)
-        group_id = resolved["productGroupId"]
+        group_id = resolved.pop("_groupId")
         product_id = resolved["productId"]
         amount = float(resolved["amount"])
         child_key = (group_id, product_id)
@@ -1570,11 +1572,12 @@ def build_iiko_modifiers(
 
     for (group_id, product_id), amount in child_totals.items():
         modifier_info = groups[group_id]["items"][product_id]
-        validate_modifier_quantity(
-            amount,
-            modifier_info["restrictions"],
-            f"Modifier {product_id}",
-        )
+        if groups[group_id]["child_modifiers_have_min_max_restrictions"]:
+            validate_modifier_quantity(
+                amount,
+                modifier_info["restrictions"],
+                f"Modifier {product_id}",
+            )
         if groups[group_id]["child_modifiers_have_min_max_restrictions"]:
             group_totals[group_id] = group_totals.get(group_id, 0.0) + 1
         else:
@@ -1603,7 +1606,7 @@ def build_unresolved_iiko_modifiers(item: OrderItemIn) -> list[dict[str, Any]]:
                 key: value
                 for key, value in {
                     "productId": modifier.product_id,
-                    "productGroupId": modifier.product_group_id,
+                    "productGroupId": as_iiko_guid(modifier.product_group_id),
                     "amount": modifier.amount,
                     "price": modifier.price,
                 }.items()
@@ -1686,12 +1689,55 @@ def resolve_iiko_modifier(
             )
         group_id, modifier_info = matches[0]
 
-    return {
+    result = {
         "productId": modifier.product_id,
-        "productGroupId": group_id,
         "amount": modifier.amount,
         "price": float(modifier_info["price"]),
+        "_groupId": group_id,
     }
+    iiko_group_id = as_iiko_guid(group_id)
+    if iiko_group_id is not None:
+        result["productGroupId"] = iiko_group_id
+
+    return result
+
+
+def sanitize_iiko_order_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    order = dict(payload)
+    items = order.get("items")
+    if isinstance(items, list):
+        order["items"] = [sanitize_iiko_order_item(item) for item in items]
+
+    return order
+
+
+def sanitize_iiko_order_item(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+
+    result = dict(item)
+    modifiers = result.get("modifiers")
+    if isinstance(modifiers, list):
+        result["modifiers"] = [sanitize_iiko_modifier(modifier) for modifier in modifiers]
+
+    return result
+
+
+def sanitize_iiko_modifier(modifier: Any) -> Any:
+    if not isinstance(modifier, dict):
+        return modifier
+
+    result = dict(modifier)
+    product_group_id = as_iiko_guid(optional_str(result.get("productGroupId")))
+    if product_group_id is None:
+        result.pop("productGroupId", None)
+    else:
+        result["productGroupId"] = product_group_id
+
+    return result
 
 
 def is_iiko_modifier_group_required(
@@ -1710,13 +1756,20 @@ def is_iiko_modifier_group_required(
 def validate_modifier_quantity(amount: float, restrictions: dict[str, float | None], label: str) -> None:
     min_quantity = restrictions["min_quantity"]
     max_quantity = restrictions["max_quantity"]
+    by_default = restrictions.get("by_default") or 0
 
     if amount < min_quantity:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"{label} requires at least {min_quantity:g}",
         )
-    if max_quantity is not None and amount > max_quantity:
+    is_default_included_amount = (
+        min_quantity == 0
+        and max_quantity == 0
+        and by_default > 0
+        and amount <= by_default
+    )
+    if max_quantity is not None and amount > max_quantity and not is_default_included_amount:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"{label} allows at most {max_quantity:g}",
@@ -1736,6 +1789,7 @@ def parse_iiko_modifier_restrictions(value: Any) -> dict[str, float | None]:
     return {
         "min_quantity": parse_float(restrictions.get("minQuantity")) or 0,
         "max_quantity": parse_float(restrictions.get("maxQuantity")),
+        "by_default": parse_float(restrictions.get("byDefault")) or 0,
     }
 
 
@@ -1893,6 +1947,11 @@ def optional_str(value: Any) -> str | None:
         return None
     value = str(value).strip()
     return value or None
+
+
+def as_iiko_guid(value: str | None) -> str | None:
+    parsed = parse_uuid(value)
+    return str(parsed) if parsed is not None else None
 
 
 def parse_uuid(value: str | None) -> UUID | None:

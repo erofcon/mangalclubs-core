@@ -199,6 +199,7 @@ async def get_delivery_settings(db: AsyncSession) -> dict:
     return {
         "delivery_area": get_delivery_area_geojson(),
         "pricing_zones": await list_delivery_zones(db),
+        "yandex_maps_api_key": settings.yandex_maps_api_key,
     }
 
 

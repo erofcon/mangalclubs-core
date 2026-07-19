@@ -59,6 +59,14 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEOAPIFY_API_KEY", "EXPO_PUBLIC_GEOAPIFY_KEY"),
     )
+    yandex_maps_api_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "YANDEX_MAPS_API_KEY",
+            "EXPO_PUBLIC_YANDEX_MAPS_API_KEY",
+            "NEXT_PUBLIC_YANDEX_MAPS_API_KEY",
+        ),
+    )
     geoapify_request_timeout_seconds: float = 3.0
     expo_push_request_timeout_seconds: float = 5.0
 

@@ -89,3 +89,4 @@ class DeliveryCalculationOut(BaseModel):
 class DeliverySettingsOut(BaseModel):
     delivery_area: DeliveryAreaOut = Field(serialization_alias="deliveryArea")
     pricing_zones: list[DeliveryZoneOut] = Field(serialization_alias="pricingZones")
+    yandex_maps_api_key: str | None = Field(default=None, serialization_alias="yandexMapsApiKey")

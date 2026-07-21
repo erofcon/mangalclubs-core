@@ -1,10 +1,34 @@
 # Деплой на VPS
 
-Я сделал деплой максимально простым: Docker собирает API, рядом поднимается Postgres, worker, Caddy для HTTPS и контейнер с бэкапами.
+Эта инструкция для запуска backend на VPS. На сервере поднимаются:
 
-## 1. Что поставить на VPS
+- API приложения;
+- Postgres;
+- worker для фоновых задач;
+- Caddy, чтобы принять HTTP/HTTPS снаружи и прокинуть запросы в API;
+- контейнер с ежедневными бэкапами базы и media-файлов.
 
-На чистом сервере нужны только git и Docker с compose plugin.
+Обновление делаю вручную, когда сам решу выкатить новую версию.
+
+## 1. Что подготовить
+
+Нужен VPS на Ubuntu/Debian, доступ по SSH и репозиторий с кодом в GitHub/GitLab/Bitbucket.
+
+`.env` в git не заливаю. На сервере он будет отдельным файлом.
+
+Если есть домен, сразу делаю DNS:
+
+- `A` запись `api.example.ru` на IP VPS.
+
+Если домена пока нет, можно сначала запускать по IP через HTTP.
+
+## 2. Зайти на VPS
+
+```bash
+ssh root@SERVER_IP
+```
+
+Обновляю пакеты и ставлю git + Docker:
 
 ```bash
 apt update
@@ -12,7 +36,20 @@ apt install -y git ca-certificates curl
 curl -fsSL https://get.docker.com | sh
 ```
 
-Потом клонирую проект, например так:
+Если включен firewall, открываю SSH, HTTP и HTTPS:
+
+```bash
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw enable
+```
+
+## 3. Залить код
+
+Сначала код надо залить в git-репозиторий. Лучше приватный.
+
+Потом на VPS:
 
 ```bash
 mkdir -p /opt
@@ -21,35 +58,66 @@ git clone <repo-url> mangalclubs-core
 cd mangalclubs-core
 ```
 
-## 2. Настроить env
+Если репозиторий приватный, на сервере нужен доступ: deploy key, SSH-ключ или HTTPS token.
+
+## 4. Настроить `.env`
 
 ```bash
 cp .env.deploy.example .env
 nano .env
 ```
 
-Главное поменять:
+Что обязательно поменять:
 
-- `POSTGRES_PASSWORD` - пароль от базы.
+- `POSTGRES_PASSWORD` - нормальный пароль от базы.
 - `JWT_SECRET_KEY` - длинная случайная строка.
-- `DOMAIN` - домен API. Если домена пока нет, можно временно поставить `DOMAIN=:80`.
-- `CORS_ORIGINS` - адреса фронта.
+- `DOMAIN` - домен API, например `api.example.ru`.
 - `PUBLIC_API_BASE_URL` - публичный адрес API, например `https://api.example.ru`.
-- `TBANK_DEFAULT_TERMINAL_KEY` и `TBANK_DEFAULT_PASSWORD` - пока тестовые от T-Bank. Потом просто меняю эти же строки на боевые.
+- `TBANK_DEFAULT_TERMINAL_KEY` и `TBANK_DEFAULT_PASSWORD` - тестовые данные терминала T-Bank. Потом эти же строки меняются на боевые.
 
-Для генерации секрета можно так:
+Секрет можно сгенерировать так:
 
 ```bash
 openssl rand -hex 32
 ```
 
-## 3. Запуск
+Если домена пока нет:
+
+```env
+DOMAIN=:80
+PUBLIC_API_BASE_URL=http://SERVER_IP
+COOKIE_SECURE=false
+```
+
+Когда появится домен и HTTPS, возвращаю:
+
+```env
+DOMAIN=api.example.ru
+PUBLIC_API_BASE_URL=https://api.example.ru
+COOKIE_SECURE=true
+```
+
+### CORS
+
+`CORS_ORIGINS` нужен в основном для браузера: web-фронта, админки, локальной разработки.
+
+Для обычного мобильного приложения CORS обычно не нужен, потому что это ограничение браузера. Поэтому туда указываю адреса web-фронта, например:
+
+```env
+CORS_ORIGINS=https://example.ru,https://www.example.ru
+```
+
+Если мобильное приложение открывает web-часть внутри WebView или есть Expo web, тогда добавляю туда именно web-адрес этой части.
+
+`*` лучше не ставить, потому что в API включены cookies/credentials.
+
+## 5. Первый запуск
 
 ```bash
 docker compose up -d --build
 ```
 
-Миграции Alembic запускаются сами перед стартом API.
+Миграции Alembic запускаются автоматически перед стартом API.
 
 Проверка:
 
@@ -58,58 +126,73 @@ docker compose ps
 curl http://127.0.0.1:8000/health
 ```
 
-Если `DOMAIN` нормальный и DNS уже смотрит на VPS, Caddy сам выпустит HTTPS-сертификат.
+Если `DOMAIN` указан как домен и DNS уже смотрит на VPS, Caddy сам получит HTTPS-сертификат.
 
-## 4. Обновление
-
-Вручную:
+Снаружи проверяю так:
 
 ```bash
+curl https://api.example.ru/health
+```
+
+Или без домена:
+
+```bash
+curl http://SERVER_IP/health
+```
+
+## 6. Обновление вручную
+
+Когда надо выкатить новую версию:
+
+```bash
+cd /opt/mangalclubs-core
 sh scripts/deploy.sh
 ```
 
-Чтобы обновлялось само, можно добавить cron:
+Скрипт делает:
+
+- `git pull --ff-only`;
+- пересборку Docker image;
+- перезапуск контейнеров;
+- очистку старых Docker images.
+
+Автообновление по cron не включаю. Так меньше сюрпризов на сервере.
+
+## 7. Бэкапы
+
+Бэкапы складываются на сервере в папку:
 
 ```bash
-crontab -e
-```
-
-И вставить:
-
-```cron
-*/10 * * * * cd /opt/mangalclubs-core && sh scripts/deploy.sh >> /var/log/mangalclubs-deploy.log 2>&1
-```
-
-Так сервер раз в 10 минут проверяет репозиторий, пересобирает контейнеры и перезапускает их.
-
-## 5. Бэкапы
-
-Бэкапы складываются в папку:
-
-```bash
-./backups
+/opt/mangalclubs-core/backups
 ```
 
 Там будут:
 
-- `mangalclubs_YYYYMMDD-HHMMSS.dump` - база Postgres.
+- `mangalclubs_YYYYMMDD-HHMMSS.dump` - база Postgres;
 - `media_YYYYMMDD-HHMMSS.tar.gz` - загруженные файлы.
 
-По умолчанию хранятся 14 дней. Меняется через `BACKUP_KEEP_DAYS` в `.env`.
+По умолчанию хранится 14 дней. Меняется в `.env`:
 
-Восстановить базу можно так:
+```env
+BACKUP_KEEP_DAYS=14
+```
+
+Восстановить базу:
 
 ```bash
 docker compose exec -T postgres pg_restore -U mangalclubs -d mangalclubs --clean --if-exists < backups/mangalclubs_YYYYMMDD-HHMMSS.dump
 ```
 
-Media восстановить так:
+Восстановить media-файлы в Docker volume:
 
 ```bash
-tar -xzf backups/media_YYYYMMDD-HHMMSS.tar.gz -C media
+docker run --rm \
+  -v mangalclubs-core_mangalclubs_media:/media \
+  -v /opt/mangalclubs-core/backups:/backups \
+  alpine sh -c "cd /media && tar -xzf /backups/media_YYYYMMDD-HHMMSS.tar.gz"
 ```
 
-## 6. Полезные команды
+## 8. Полезные команды
 
 Логи API:
 
@@ -123,16 +206,46 @@ docker compose logs -f api
 docker compose logs -f worker
 ```
 
-Остановить:
+Логи бэкапов:
+
+```bash
+docker compose logs -f backup
+```
+
+Перезапустить API:
+
+```bash
+docker compose restart api
+```
+
+Остановить все:
 
 ```bash
 docker compose down
 ```
 
-Adminer я не держу включенным постоянно, чтобы не есть память. Если надо посмотреть базу:
+Посмотреть базу через Adminer:
 
 ```bash
 docker compose --profile tools up -d adminer
 ```
 
-Потом открыть через SSH tunnel на `127.0.0.1:8080`.
+Adminer слушает только `127.0.0.1`, поэтому открываю через SSH tunnel:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 root@SERVER_IP
+```
+
+Потом в браузере:
+
+```text
+http://127.0.0.1:8080
+```
+
+Данные для входа:
+
+- system: `PostgreSQL`
+- server: `postgres`
+- username: значение `POSTGRES_USER`
+- password: значение `POSTGRES_PASSWORD`
+- database: значение `POSTGRES_DB`

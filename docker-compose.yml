@@ -1,3 +1,5 @@
+name: mangalclubs-core
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -60,8 +62,8 @@ services:
     ports:
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
-      - ./media:/app/media
-      - ./logs:/app/logs
+      - mangalclubs_media:/app/media
+      - mangalclubs_logs:/app/logs
     healthcheck:
       test:
         [
@@ -92,8 +94,8 @@ services:
       api:
         condition: service_healthy
     volumes:
-      - ./media:/app/media
-      - ./logs:/app/logs
+      - mangalclubs_media:/app/media
+      - mangalclubs_logs:/app/logs
     mem_limit: ${WORKER_MEMORY_LIMIT:-256m}
 
   caddy:
@@ -134,7 +136,7 @@ services:
     volumes:
       - ./docker/postgres-backup.sh:/backup/postgres-backup.sh:ro
       - ./backups:/backups
-      - ./media:/media:ro
+      - mangalclubs_media:/media:ro
     mem_limit: ${BACKUP_MEMORY_LIMIT:-128m}
 
   adminer:
@@ -151,5 +153,7 @@ services:
 
 volumes:
   mangalclubs_pg_data:
+  mangalclubs_media:
+  mangalclubs_logs:
   caddy_data:
   caddy_config:

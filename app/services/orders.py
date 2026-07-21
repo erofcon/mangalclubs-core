@@ -1469,13 +1469,13 @@ def resolve_order_phone(payload: OrderCreateIn, customer: Customer | None) -> st
 
 def build_iiko_item(organization: Organization, item: OrderItemIn) -> dict[str, Any]:
     menu_item = find_menu_item(organization, item.product_id, item.product_size_id)
-    price = menu_item["price"] if menu_item else item.price
 
-    if price is None:
+    if menu_item is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Price for product {item.product_id} was not found in menu",
         )
+    price = menu_item["price"]
 
     result: dict[str, Any] = {
         "productId": item.product_id,
@@ -1484,7 +1484,7 @@ def build_iiko_item(organization: Organization, item: OrderItemIn) -> dict[str, 
         "amount": item.amount,
     }
 
-    product_size_id = item.product_size_id or (menu_item or {}).get("productSizeId")
+    product_size_id = item.product_size_id or menu_item.get("productSizeId")
     if product_size_id:
         result["productSizeId"] = product_size_id
     if item.comment:
@@ -1538,15 +1538,21 @@ def build_iiko_modifiers(
     item: OrderItemIn,
     menu_item: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    if not item.modifiers and (not menu_item or not organization.iiko_organization_id):
+    if not item.modifiers:
         return []
 
     if not menu_item or not organization.iiko_organization_id:
-        return build_unresolved_iiko_modifiers(item)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Modifiers for product {item.product_id} were not found in menu",
+        )
 
     item_size = menu_item.get("itemSize")
     if not isinstance(item_size, dict):
-        return build_unresolved_iiko_modifiers(item)
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Modifiers for product {item.product_id} were not found in menu",
+        )
 
     groups = build_menu_modifier_groups(item_size, organization.iiko_organization_id)
     if not groups:
@@ -1593,29 +1599,6 @@ def build_iiko_modifiers(
     return resolved_modifiers
 
 
-def build_unresolved_iiko_modifiers(item: OrderItemIn) -> list[dict[str, Any]]:
-    modifiers = []
-    for modifier in item.modifiers:
-        if modifier.price is None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                f"Price for modifier {modifier.product_id} was not found in menu",
-            )
-        modifiers.append(
-            {
-                key: value
-                for key, value in {
-                    "productId": modifier.product_id,
-                    "productGroupId": as_iiko_guid(modifier.product_group_id),
-                    "amount": modifier.amount,
-                    "price": modifier.price,
-                }.items()
-                if value is not None
-            }
-        )
-    return modifiers
-
-
 def build_menu_modifier_groups(item_size: dict[str, Any], iiko_organization_id: str) -> dict[str, dict[str, Any]]:
     groups = {}
     for group in item_size.get("itemModifierGroups") or []:
@@ -1635,7 +1618,7 @@ def build_menu_modifier_groups(item_size: dict[str, Any], iiko_organization_id: 
                 continue
             price = select_menu_price(modifier, iiko_organization_id)
             items[product_id] = {
-                "price": price if price is not None else 0,
+                "price": price,
                 "restrictions": parse_iiko_modifier_restrictions(modifier.get("restrictions")),
             }
 
@@ -1688,6 +1671,12 @@ def resolve_iiko_modifier(
                 f"productGroupId is required for modifier {modifier.product_id}",
             )
         group_id, modifier_info = matches[0]
+
+    if modifier_info["price"] is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Price for modifier {modifier.product_id} was not found in menu",
+        )
 
     result = {
         "productId": modifier.product_id,

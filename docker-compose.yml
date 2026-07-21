@@ -78,6 +78,8 @@ services:
     mem_limit: ${API_MEMORY_LIMIT:-384m}
 
   worker:
+    build:
+      context: .
     image: mangalclubs-core:local
     container_name: mangalclubs-worker
     restart: unless-stopped

@@ -1,11 +1,12 @@
 # Деплой на VPS
 
-Эта инструкция для запуска backend на VPS. На сервере поднимаются:
+Эта инструкция для запуска backend и web на VPS. На сервере поднимаются:
 
 - API приложения;
 - Postgres;
 - worker для фоновых задач;
-- Caddy, чтобы принять HTTP/HTTPS снаружи и прокинуть запросы в API;
+- Next.js web;
+- Caddy, чтобы принять HTTP/HTTPS снаружи и прокинуть запросы в API и web;
 - контейнер с ежедневными бэкапами базы и media-файлов.
 
 Обновление делаю вручную, когда сам решу выкатить новую версию.
@@ -18,7 +19,8 @@
 
 Если есть домен, сразу делаю DNS:
 
-- `A` запись `api.example.ru` на IP VPS.
+- `A` запись `api.example.ru` на IP VPS;
+- `A` запись `example.ru` на IP VPS.
 
 Если домена пока нет, можно сначала запускать по IP через HTTP.
 
@@ -54,7 +56,8 @@ ufw enable
 ```bash
 mkdir -p /opt
 cd /opt
-git clone <repo-url> mangalclubs-core
+git clone <core-repo-url> mangalclubs-core
+git clone <web-repo-url> mangalclubs-web
 cd mangalclubs-core
 ```
 
@@ -72,7 +75,11 @@ nano .env
 - `POSTGRES_PASSWORD` - нормальный пароль от базы.
 - `JWT_SECRET_KEY` - длинная случайная строка.
 - `DOMAIN` - домен API, например `api.example.ru`.
+- `WEB_DOMAIN` - основной домен сайта, например `example.ru`.
+- `WEB_DIR` - путь до frontend относительно backend, если оба репозитория лежат в `/opt`, оставляю `../mangalclubs-web`.
 - `PUBLIC_API_BASE_URL` - публичный адрес API, например `https://api.example.ru`.
+- `NEXT_PUBLIC_API_URL` - публичный адрес API для сборки frontend.
+- `NEXT_PUBLIC_SITE_URL` - публичный адрес сайта для сборки frontend.
 - `TBANK_DEFAULT_TERMINAL_KEY` и `TBANK_DEFAULT_PASSWORD` - тестовые данные терминала T-Bank. Потом эти же строки меняются на боевые.
 
 Секрет можно сгенерировать так:
@@ -93,7 +100,10 @@ COOKIE_SECURE=false
 
 ```env
 DOMAIN=api.example.ru
+WEB_DOMAIN=example.ru
 PUBLIC_API_BASE_URL=https://api.example.ru
+NEXT_PUBLIC_API_URL=https://api.example.ru
+NEXT_PUBLIC_SITE_URL=https://example.ru
 COOKIE_SECURE=true
 ```
 
@@ -132,6 +142,8 @@ curl http://127.0.0.1:8000/health
 
 ```bash
 curl https://api.example.ru/health
+curl -I https://example.ru
+curl https://example.ru/health
 ```
 
 Или без домена:

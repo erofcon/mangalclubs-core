@@ -1,4 +1,24 @@
 {$DOMAIN} {
-    encode gzip
+    encode zstd gzip
     reverse_proxy api:8000
+}
+
+{$WEB_DOMAIN} {
+    encode zstd gzip
+
+    handle /health {
+        reverse_proxy api:8000
+    }
+
+    handle /api/v1* {
+        reverse_proxy api:8000
+    }
+
+    handle /media* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        reverse_proxy web:3000
+    }
 }

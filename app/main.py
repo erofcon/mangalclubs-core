@@ -17,9 +17,14 @@ from app.api.v1.stories import router as stories_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 
-
 configure_logging()
-app = FastAPI(title=settings.app_name)
+
+app = FastAPI(
+    title=settings.app_name,
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
+)
 
 app.add_middleware(
     CORSMiddleware,

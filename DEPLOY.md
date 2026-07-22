@@ -261,3 +261,18 @@ http://127.0.0.1:8080
 - username: значение `POSTGRES_USER`
 - password: значение `POSTGRES_PASSWORD`
 - database: значение `POSTGRES_DB`
+
+
+Создание админа: 
+
+```bash
+cd /opt/mangalclubs-core
+docker compose exec api python scripts/create_staff_user.py --email admin@example.com --role admin
+```
+
+Если пользователь с этим email уже есть и нужно сменить ему пароль или вернуть роль администратора:
+
+```bash
+cd /opt/mangalclubs-core
+docker compose exec api python scripts/create_staff_user.py --email admin@example.com --role admin --update-password
+```

@@ -3,9 +3,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
-from app.models.booking import BookingImageOrientation
-
-
 class BookingOrganizationOut(BaseModel):
     id: UUID
     slug: str
@@ -17,7 +14,6 @@ class BookingOrganizationOut(BaseModel):
 
 class BookingImageBase(BaseModel):
     url: HttpUrl | str = Field(max_length=1024)
-    orientation: BookingImageOrientation = BookingImageOrientation.horizontal
     alt_text: str | None = Field(default=None, max_length=255)
     sort_order: int = 0
 
@@ -104,8 +100,7 @@ class BookingCreate(BaseModel):
     description: str = Field(min_length=1)
     long_description: str | None = None
     preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
-    horizontal_images: list[BookingImageCreate] = Field(default_factory=list, max_length=24)
-    vertical_images: list[BookingImageCreate] = Field(default_factory=list, max_length=24)
+    images: list[BookingImageCreate] = Field(default_factory=list, max_length=24)
     sort_order: int = 0
     is_active: bool = True
 
@@ -121,7 +116,7 @@ class BookingCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_images_limit(self) -> "BookingCreate":
-        if len(self.horizontal_images) + len(self.vertical_images) > 24:
+        if len(self.images) > 24:
             raise ValueError("A booking can have at most 24 images")
         return self
 
@@ -133,8 +128,7 @@ class BookingUpdate(BaseModel):
     description: str | None = Field(default=None, min_length=1)
     long_description: str | None = None
     preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
-    horizontal_images: list[BookingImageUpdate] | None = Field(default=None, max_length=24)
-    vertical_images: list[BookingImageUpdate] | None = Field(default=None, max_length=24)
+    images: list[BookingImageUpdate] | None = Field(default=None, max_length=24)
     sort_order: int | None = None
     is_active: bool | None = None
 
@@ -150,12 +144,7 @@ class BookingUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_images_limit(self) -> "BookingUpdate":
-        total = sum(
-            len(images)
-            for images in (self.horizontal_images, self.vertical_images)
-            if images is not None
-        )
-        if total > 24:
+        if self.images is not None and len(self.images) > 24:
             raise ValueError("A booking can have at most 24 images")
         return self
 
@@ -168,8 +157,7 @@ class BookingOut(BaseModel):
     description: str
     long_description: str | None
     preview_url: str | None
-    horizontal_images: list[BookingImageOut]
-    vertical_images: list[BookingImageOut]
+    images: list[BookingImageOut]
     sort_order: int
     is_active: bool
     organization: BookingOrganizationOut

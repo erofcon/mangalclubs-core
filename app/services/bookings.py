@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.datastructures import UploadFile
 
-from app.models.booking import Booking, BookingCategory, BookingImage, BookingImageOrientation
+from app.models.booking import Booking, BookingCategory, BookingImage
 from app.models.organization import Organization
 from app.schemas.booking import BookingCategoryCreate, BookingCategoryUpdate, BookingCreate, BookingUpdate
 from app.services.media import delete_local_media_file, save_media_upload
@@ -261,17 +261,9 @@ async def update_booking(db: AsyncSession, booking_id: UUID, payload: BookingUpd
             old_media_urls.append(booking.preview_url)
         booking.preview_url = next_preview_url
 
-    if payload.horizontal_images is not None or payload.vertical_images is not None:
+    if payload.images is not None:
         current_images = list(booking.media)
-        next_images = list(current_images)
-
-        if payload.horizontal_images is not None:
-            next_images = [image for image in next_images if image_orientation(image) != BookingImageOrientation.horizontal]
-            next_images.extend(with_image_orientation(payload.horizontal_images, BookingImageOrientation.horizontal))
-
-        if payload.vertical_images is not None:
-            next_images = [image for image in next_images if image_orientation(image) != BookingImageOrientation.vertical]
-            next_images.extend(with_image_orientation(payload.vertical_images, BookingImageOrientation.vertical))
+        next_images = list(payload.images)
 
         ensure_booking_images_limit(next_images)
         new_image_urls = {str(image.url) for image in next_images}
@@ -316,7 +308,6 @@ async def add_booking_images(
     db: AsyncSession,
     booking_id: UUID,
     files: list[UploadFile],
-    orientation: BookingImageOrientation = BookingImageOrientation.horizontal,
     sort_order: int = 0,
 ) -> Booking:
     booking = await get_booking_by_id(db, booking_id, include_inactive=True)
@@ -326,7 +317,6 @@ async def add_booking_images(
         image = BookingImage(
             booking_id=booking.id,
             url=await save_media_upload(file, "bookings", str(booking.id)),
-            orientation=orientation,
             sort_order=sort_order + index,
         )
         db.add(image)
@@ -365,7 +355,6 @@ def replace_booking_images(booking: Booking, images) -> None:
     booking.media = [
         BookingImage(
             url=str(item.url),
-            orientation=item.orientation,
             alt_text=item.alt_text,
             sort_order=item.sort_order,
         )
@@ -374,28 +363,9 @@ def replace_booking_images(booking: Booking, images) -> None:
 
 
 def collect_booking_images(payload: BookingCreate) -> list:
-    images = [
-        *with_image_orientation(payload.horizontal_images, BookingImageOrientation.horizontal),
-        *with_image_orientation(payload.vertical_images, BookingImageOrientation.vertical),
-    ]
+    images = list(payload.images)
     ensure_booking_images_limit(images)
     return images
-
-
-def with_image_orientation(images, orientation: BookingImageOrientation) -> list[BookingImage]:
-    return [
-        BookingImage(
-            url=str(item.url),
-            orientation=orientation,
-            alt_text=item.alt_text,
-            sort_order=item.sort_order,
-        )
-        for item in images
-    ]
-
-
-def image_orientation(image) -> BookingImageOrientation:
-    return BookingImageOrientation(image.orientation)
 
 
 def ensure_booking_images_limit(images) -> None:

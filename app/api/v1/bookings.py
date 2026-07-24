@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin
 from app.db.session import get_db
-from app.models.booking import BookingImageOrientation
 from app.models.staff import StaffUser
 from app.schemas.booking import BookingCategoryCreate, BookingCategoryOut, BookingCategoryUpdate, BookingCreate, BookingOut, BookingUpdate
 from app.services.bookings import (
@@ -130,8 +129,8 @@ async def bookings_upload_preview(
     return await upload_booking_preview(db, booking_id, preview)
 
 
-@router.post("/{booking_id}/images/horizontal", response_model=BookingOut)
-async def bookings_add_horizontal_images(
+@router.post("/{booking_id}/images", response_model=BookingOut)
+async def bookings_add_images(
     booking_id: UUID,
     images: list[UploadFile] = File(...),
     sort_order: int = Form(default=0),
@@ -142,24 +141,6 @@ async def bookings_add_horizontal_images(
         db,
         booking_id,
         images,
-        orientation=BookingImageOrientation.horizontal,
-        sort_order=sort_order,
-    )
-
-
-@router.post("/{booking_id}/images/vertical", response_model=BookingOut)
-async def bookings_add_vertical_images(
-    booking_id: UUID,
-    images: list[UploadFile] = File(...),
-    sort_order: int = Form(default=0),
-    db: AsyncSession = Depends(get_db),
-    _: StaffUser = Depends(get_current_admin),
-):
-    return await add_booking_images(
-        db,
-        booking_id,
-        images,
-        orientation=BookingImageOrientation.vertical,
         sort_order=sort_order,
     )
 

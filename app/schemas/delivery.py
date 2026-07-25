@@ -1,13 +1,23 @@
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DeliveryZoneBase(BaseModel):
     distance_from_km: Decimal = Field(ge=0, max_digits=6, decimal_places=2)
     distance_to_km: Decimal | None = Field(default=None, gt=0, max_digits=6, decimal_places=2)
     price: int = Field(ge=0)
+    delivery_time: str = Field(min_length=1, max_length=64)
+
+    @field_validator("delivery_time")
+    @classmethod
+    def normalize_delivery_time(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("delivery_time must not be blank")
+
+        return value
 
     @model_validator(mode="after")
     def validate_distance_range(self):
@@ -25,6 +35,16 @@ class DeliveryZoneUpdate(BaseModel):
     distance_from_km: Decimal | None = Field(default=None, ge=0, max_digits=6, decimal_places=2)
     distance_to_km: Decimal | None = Field(default=None, gt=0, max_digits=6, decimal_places=2)
     price: int | None = Field(default=None, ge=0)
+    delivery_time: str = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("delivery_time")
+    @classmethod
+    def normalize_delivery_time(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("delivery_time must not be blank")
+
+        return value
 
 
 class DeliveryZoneOut(BaseModel):
@@ -32,6 +52,7 @@ class DeliveryZoneOut(BaseModel):
     distance_from_km: float
     distance_to_km: float | None
     price: int
+    delivery_time: str
 
     model_config = ConfigDict(from_attributes=True)
 

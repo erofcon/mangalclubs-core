@@ -132,6 +132,7 @@ async def create_delivery_zone(db: AsyncSession, payload: DeliveryZoneCreate) ->
         distance_from_km=payload.distance_from_km,
         distance_to_km=payload.distance_to_km,
         price=payload.price,
+        delivery_time=payload.delivery_time,
     )
     db.add(zone)
     await db.commit()
@@ -160,7 +161,7 @@ async def update_delivery_zone(
         exclude_zone_id=zone.id,
     )
 
-    for field in ("distance_from_km", "distance_to_km", "price"):
+    for field in ("distance_from_km", "distance_to_km", "price", "delivery_time"):
         if field in data:
             setattr(zone, field, data[field])
 

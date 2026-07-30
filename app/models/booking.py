@@ -12,11 +12,6 @@ from app.models.base import Base, IdMixin, TimestampMixin
 class BookingCategory(Base, IdMixin, TimestampMixin):
     __tablename__ = "booking_categories"
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=False,
-    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     preview_url: Mapped[str | None] = mapped_column(String(1024))
@@ -24,17 +19,13 @@ class BookingCategory(Base, IdMixin, TimestampMixin):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    organization = relationship("Organization", back_populates="booking_categories")
     bookings: Mapped[list[Booking]] = relationship(
         back_populates="category",
         cascade="all, delete-orphan",
         order_by="Booking.sort_order",
     )
 
-    __table_args__ = (
-        UniqueConstraint("organization_id", "title", name="uq_booking_categories_organization_title"),
-        Index("ix_booking_categories_organization_sort", "organization_id", "sort_order"),
-    )
+    __table_args__ = (Index("ix_booking_categories_sort", "sort_order"),)
 
 
 class Booking(Base, IdMixin, TimestampMixin):

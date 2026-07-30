@@ -43,7 +43,6 @@ class BookingImageOut(BookingImageBase):
 
 
 class BookingCategoryCreate(BaseModel):
-    organization_id: UUID
     title: str = Field(min_length=1, max_length=255)
     description: str | None = None
     preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
@@ -62,7 +61,6 @@ class BookingCategoryCreate(BaseModel):
 
 
 class BookingCategoryUpdate(BaseModel):
-    organization_id: UUID | None = None
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     preview_url: HttpUrl | str | None = Field(default=None, max_length=1024)
@@ -82,13 +80,11 @@ class BookingCategoryUpdate(BaseModel):
 
 class BookingCategoryOut(BaseModel):
     id: UUID
-    organization_id: UUID
     title: str
     description: str | None
     preview_url: str | None
     sort_order: int
     is_active: bool
-    organization: BookingOrganizationOut
 
     model_config = ConfigDict(from_attributes=True)
 

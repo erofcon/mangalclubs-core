@@ -39,12 +39,6 @@ class Organization(Base, IdMixin, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="OrganizationWorkingHour.weekday",
     )
-    booking_categories: Mapped[list[BookingCategory]] = relationship(
-        "BookingCategory",
-        back_populates="organization",
-        cascade="all, delete-orphan",
-        order_by="BookingCategory.sort_order",
-    )
     bookings: Mapped[list[Booking]] = relationship(
         "Booking",
         back_populates="organization",

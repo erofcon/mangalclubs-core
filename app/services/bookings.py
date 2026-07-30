@@ -14,7 +14,7 @@ from app.services.media import delete_local_media_file, save_media_upload
 
 
 def category_query(*, include_inactive: bool = False):
-    statement = select(BookingCategory).options(selectinload(BookingCategory.organization))
+    statement = select(BookingCategory)
     if not include_inactive:
         statement = statement.where(BookingCategory.is_active.is_(True))
     return statement
@@ -25,10 +25,7 @@ def category_with_bookings_query(*, include_inactive: bool = False):
     if not include_inactive:
         bookings_loader = selectinload(BookingCategory.bookings.and_(Booking.is_active.is_(True)))
 
-    statement = select(BookingCategory).options(
-        selectinload(BookingCategory.organization),
-        bookings_loader.selectinload(Booking.media),
-    )
+    statement = select(BookingCategory).options(bookings_loader.selectinload(Booking.media))
     if not include_inactive:
         statement = statement.where(BookingCategory.is_active.is_(True))
     return statement
@@ -37,7 +34,7 @@ def category_with_bookings_query(*, include_inactive: bool = False):
 def booking_query(*, include_inactive: bool = False):
     statement = select(Booking).options(
         selectinload(Booking.organization),
-        selectinload(Booking.category).selectinload(BookingCategory.organization),
+        selectinload(Booking.category),
         selectinload(Booking.media),
     )
     if not include_inactive:
@@ -83,23 +80,17 @@ async def list_booking_categories(
     organization_id: UUID | None = None,
     organization_slug: str | None = None,
 ) -> list[BookingCategory]:
+    # Categories are global, so organization query parameters are intentionally
+    # ignored for backward-compatible endpoint signatures.
+    del organization_id, organization_slug
     statement = category_query()
-
-    if organization_id is not None:
-        statement = statement.where(BookingCategory.organization_id == organization_id)
-
-    if organization_slug is not None:
-        statement = statement.join(BookingCategory.organization).where(Organization.slug == organization_slug)
 
     result = await db.scalars(statement.order_by(BookingCategory.sort_order, BookingCategory.title))
     return list(result.unique())
 
 
 async def create_booking_category(db: AsyncSession, payload: BookingCategoryCreate) -> BookingCategory:
-    await ensure_organization_exists(db, payload.organization_id)
-
     category = BookingCategory(
-        organization_id=payload.organization_id,
         title=payload.title,
         description=payload.description,
         preview_url=str(payload.preview_url) if payload.preview_url is not None else None,
@@ -130,17 +121,9 @@ async def update_booking_category(
 
     data = payload.model_dump(exclude_unset=True)
 
-    if payload.organization_id is not None:
-        await ensure_organization_exists(db, payload.organization_id)
-        if payload.organization_id != category.organization_id and category.bookings:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "Booking category with bookings cannot be moved to another organization",
-            )
-
     old_preview_url: str | None = None
 
-    for field in ("organization_id", "title", "description", "sort_order", "is_active"):
+    for field in ("title", "description", "sort_order", "is_active"):
         if field in data:
             setattr(category, field, data[field])
 
@@ -341,14 +324,8 @@ async def delete_booking_image(db: AsyncSession, booking_id: UUID, image_id: UUI
 
 async def validate_booking_links(db: AsyncSession, organization_id: UUID, category_id: UUID) -> None:
     await ensure_organization_exists(db, organization_id)
-    category_organization_id = await db.scalar(
-        select(BookingCategory.organization_id).where(BookingCategory.id == category_id)
-    )
-    if category_organization_id is None:
+    if not await db.scalar(select(BookingCategory.id).where(BookingCategory.id == category_id)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Booking category not found")
-
-    if category_organization_id != organization_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Booking category belongs to another organization")
 
 
 def replace_booking_images(booking: Booking, images) -> None:

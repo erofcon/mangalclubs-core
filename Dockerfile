@@ -6,6 +6,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# T-Bank currently presents a certificate chain rooted at Russian Trusted Root
+# CA.  The certificate is added to the OS trust store so TLS verification stays
+# enabled for both API and worker requests.
+COPY certs/russian-trusted-root-ca.crt /usr/local/share/ca-certificates/russian-trusted-root-ca.crt
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y ca-certificates && \
+    update-ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system app && \
     useradd --system --gid app --home-dir /app app
 

@@ -38,6 +38,32 @@ apt install -y git ca-certificates curl
 curl -fsSL https://get.docker.com | sh
 ```
 
+### Сертификат T-Bank
+
+Образ API автоматически добавляет официальный корневой сертификат `Russian Trusted Root CA` в системное хранилище. Это требуется для подключения к `securepay.tinkoff.ru`: T-Bank использует цепочку сертификатов российского УЦ, которой стандартный набор Python может не доверять.
+
+Не нужно задавать `verify=False`, `SSL_CERT_FILE` или вручную устанавливать сертификат на хост VPS. После обновления кода пересоберите образы и проверьте подключение из контейнера:
+
+```bash
+docker compose up -d --build
+docker compose exec -T api python - <<'PY'
+import httpx
+import ssl
+
+response = httpx.post(
+    "https://securepay.tinkoff.ru/v2/Init",
+    json={},
+    timeout=10,
+    verify=ssl.create_default_context(),
+)
+print(response.status_code, response.json()["Message"])
+PY
+```
+
+Ожидается `200` и сообщение о пустом `TerminalKey`: это намеренно неполный запрос, который подтверждает TLS-соединение, не создавая платёж. Ошибка проверки сертификата означает, что запущен старый образ — повторите сборку с `--build`.
+
+Файл [`certs/russian-trusted-root-ca.crt`](certs/russian-trusted-root-ca.crt) — официальный корневой сертификат, полученный с [gu-st.ru](https://gu-st.ru/content/lending/russian_trusted_root_ca_pem.crt); SHA-256: `936A43FEA6E8E525BCC0F81ACD9C3D21B4FC4B9B68ACEA7906D698005AFC6504`.
+
 Если включен firewall, открываю SSH, HTTP и HTTPS:
 
 ```bash

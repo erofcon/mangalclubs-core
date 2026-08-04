@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ssl
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +30,12 @@ TERMINAL_PAYMENT_STATUSES = {
     "REFUNDED": "payment_cancelled",
     "PARTIAL_REFUNDED": "payment_cancelled",
 }
+
+# httpx otherwise uses certifi's bundled roots, which may not contain the
+# Russian Trusted Root CA used by T-Bank.  On Linux this context reads the OS
+# trust store prepared in the Docker image. Locally it also honors an explicitly
+# configured SSL_CERT_FILE, while preserving certificate verification.
+SSL_CONTEXT = ssl.create_default_context()
 
 
 def get_tbank_credentials(organization: Organization) -> TBankCredentials:
@@ -140,7 +147,7 @@ async def request_tbank_json(method: str, payload: dict[str, Any]) -> dict[str, 
     timeout = httpx.Timeout(settings.tbank_request_timeout_seconds)
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=SSL_CONTEXT) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:

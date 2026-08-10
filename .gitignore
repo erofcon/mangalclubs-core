@@ -8,4 +8,5 @@ __pycache__/
 .ruff_cache/
 media/
 logs/
+certs/python-ca-bundle.pem
 *.log

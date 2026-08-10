@@ -2,7 +2,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
+
+from app.core.time import to_moscow
 
 
 OrderType = Literal["delivery", "pickup"]
@@ -90,6 +92,10 @@ class MenuOut(BaseModel):
     is_stale: bool = Field(serialization_alias="isStale")
     categories: list[MenuCategoryOut]
     menu: list[MenuCategoryWithItemsOut]
+
+    @field_serializer("synced_at")
+    def serialize_moscow_datetime(self, value: datetime | None) -> datetime | None:
+        return to_moscow(value)
 
 
 class MenuItemContentBase(BaseModel):

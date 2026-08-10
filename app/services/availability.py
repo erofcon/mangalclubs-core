@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 
-from app.core.config import settings
+from app.core.time import MOSCOW_TZ
 from app.models.organization import Organization, OrganizationWorkingHour
 
 
@@ -86,7 +85,7 @@ def build_working_hours_availability(orders_available: bool, reason: str, messag
 def build_order_time_windows(
     hours_by_weekday: dict[int, OrganizationWorkingHour],
     slot_date: date,
-    local_timezone: ZoneInfo | timezone,
+    local_timezone,
 ) -> list[tuple[datetime, datetime]]:
     windows: list[tuple[datetime, datetime]] = []
     current_weekday = slot_date.weekday()
@@ -181,8 +180,6 @@ def get_local_now(now: datetime | None) -> datetime:
     return now.astimezone(local_timezone)
 
 
-def get_local_timezone() -> ZoneInfo | timezone:
-    try:
-        return ZoneInfo(settings.iiko_terminal_timezone)
-    except ZoneInfoNotFoundError:
-        return timezone.utc
+def get_local_timezone():
+    """Restaurant business time is always Moscow time."""
+    return MOSCOW_TZ

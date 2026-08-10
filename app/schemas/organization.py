@@ -4,7 +4,9 @@ from typing import Literal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_serializer, field_validator, model_validator
+
+from app.core.time import to_moscow
 
 
 class CoordinatesIn(BaseModel):
@@ -255,6 +257,10 @@ class OrganizationAvailabilityOut(BaseModel):
     ]
     message: str
     checked_at: datetime
+
+    @field_serializer("checked_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
 
 
 class OrganizationOrderTimeWindowOut(BaseModel):

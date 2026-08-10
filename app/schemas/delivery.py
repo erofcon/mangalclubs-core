@@ -1,4 +1,5 @@
 from decimal import Decimal
+from math import isfinite
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -60,6 +61,13 @@ class DeliveryZoneOut(BaseModel):
 class DeliveryCoordinatesIn(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def validate_finite_coordinate(cls, value: float) -> float:
+        if not isfinite(value):
+            raise ValueError("coordinate must be finite")
+        return value
 
 
 class DeliveryCheckIn(BaseModel):

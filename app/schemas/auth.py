@@ -3,7 +3,9 @@ from datetime import datetime
 from uuid import UUID
 from typing import Any
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_serializer, field_validator
+
+from app.core.time import to_moscow
 
 
 class DeviceIdentity(BaseModel):
@@ -86,6 +88,10 @@ class OtpRequested(BaseModel):
     message: str = "If the phone is valid, code will be sent"
     retry_after_seconds: int = 0
     resend_available_at: datetime | None = None
+
+    @field_serializer("resend_available_at")
+    def serialize_moscow_datetime(self, value: datetime | None) -> datetime | None:
+        return to_moscow(value)
 
 
 class LogoutResponse(BaseModel):

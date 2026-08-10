@@ -11,7 +11,7 @@ WORKDIR /app
 # enabled for both API and worker requests.
 COPY certs/russian-trusted-root-ca.crt /usr/local/share/ca-certificates/russian-trusted-root-ca.crt
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y ca-certificates && \
+    apt-get install --no-install-recommends -y ca-certificates tzdata && \
     update-ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 

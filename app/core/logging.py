@@ -1,14 +1,35 @@
 import gzip
 import logging
 import shutil
+from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 from app.core.config import settings
+from app.core.time import MOSCOW_TZ
 
 
 LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+class MoscowFormatter(logging.Formatter):
+    """Render all application log timestamps in the restaurant timezone."""
+
+    def formatTime(self, record, datefmt=None):
+        value = datetime.fromtimestamp(record.created, tz=MOSCOW_TZ)
+        return value.strftime(datefmt or DATE_FORMAT)
+
+
+class MoscowMidnightRotatingFileHandler(TimedRotatingFileHandler):
+    """Rotate daily log files at midnight in Moscow, not the host timezone."""
+
+    def computeRollover(self, current_time):
+        current = datetime.fromtimestamp(current_time, tz=MOSCOW_TZ)
+        next_midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
+        if next_midnight <= current:
+            next_midnight += timedelta(days=1)
+        return next_midnight.timestamp()
 
 
 def gzip_rotated_log(source: str, destination: str) -> None:
@@ -24,13 +45,13 @@ def configure_logging() -> None:
         level_name = "INFO"
         level = logging.INFO
 
-    formatter = logging.Formatter(LOG_FORMAT, DATE_FORMAT)
+    formatter = MoscowFormatter(LOG_FORMAT, DATE_FORMAT)
     handlers: list[logging.Handler] = [logging.StreamHandler()]
 
     if settings.log_to_file:
         log_dir = Path(settings.log_dir)
         log_dir.mkdir(parents=True, exist_ok=True)
-        file_handler = TimedRotatingFileHandler(
+        file_handler = MoscowMidnightRotatingFileHandler(
             log_dir / settings.log_file_name,
             when="midnight",
             backupCount=settings.log_retention_days,

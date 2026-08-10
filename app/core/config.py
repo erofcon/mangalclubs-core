@@ -1,4 +1,5 @@
 import json
+from typing import Literal
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,7 +39,9 @@ class Settings(BaseSettings):
     iiko_menu_poll_seconds: int = 300
     iiko_token_refresh_margin_seconds: int = 120
     iiko_request_timeout_seconds: float = 10.0
-    iiko_terminal_timezone: str = "Europe/Moscow"
+    # A single business timezone keeps iiko, working hours and API dates
+    # independent from the server and client device timezone.
+    iiko_terminal_timezone: Literal["Europe/Moscow"] = "Europe/Moscow"
     iiko_order_dispatch_poll_seconds: int = 30
     iiko_order_status_poll_seconds: int = 15
 
@@ -70,7 +73,7 @@ class Settings(BaseSettings):
     geoapify_request_timeout_seconds: float = 3.0
     expo_push_request_timeout_seconds: float = 5.0
 
-    jwt_secret_key: str
+    jwt_secret_key: str = Field(min_length=32)
     access_token_minutes: int = 15
     refresh_token_days: int = 60
 

@@ -1,3 +1,4 @@
+from ipaddress import ip_address
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -31,7 +32,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def client_meta(request: Request):
-    return request.client.host if request.client else None, request.headers.get("user-agent")
+    raw_ip = request.client.host if request.client else None
+    try:
+        ip = str(ip_address(raw_ip)) if raw_ip else None
+    except ValueError:
+        # Some local ASGI test clients use a non-IP host. Do not let that
+        # prevent authentication; simply skip IP-based rate limiting.
+        ip = None
+    return ip, request.headers.get("user-agent")
 
 
 def refresh_token_from_request(request: Request, token: str | None) -> str:

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $ProjectRoot
 
-$HostAddress = "192.168.0.19"
+$HostAddress = "10.118.173.222"
 $PostgresWaitSeconds = 60
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $CaBundle = Join-Path $ProjectRoot "certs\python-ca-bundle.pem"

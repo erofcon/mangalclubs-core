@@ -2,7 +2,9 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
+
+from app.core.time import to_moscow
 
 
 class CustomerOut(BaseModel):
@@ -16,6 +18,10 @@ class CustomerOut(BaseModel):
     updated_at: datetime = Field(serialization_alias="updatedAt")
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("created_at", "updated_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
 
 
 class CustomerUpdate(BaseModel):

@@ -40,6 +40,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mangalclubs}:${POSTGRES_PASSWORD:-mangalclubs_password}@postgres:5432/${POSTGRES_DB:-mangalclubs}
+      TZ: Europe/Moscow
       MEDIA_ROOT: /app/media
       LOG_DIR: /app/logs
       LOG_FILE_NAME: api.log
@@ -87,6 +88,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mangalclubs}:${POSTGRES_PASSWORD:-mangalclubs_password}@postgres:5432/${POSTGRES_DB:-mangalclubs}
+      TZ: Europe/Moscow
       MEDIA_ROOT: /app/media
       LOG_DIR: /app/logs
       LOG_FILE_NAME: worker.log

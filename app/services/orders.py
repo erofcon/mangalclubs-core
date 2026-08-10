@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 from uuid import UUID
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, status
 from sqlalchemy import or_, select, text
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.time import MOSCOW_TZ, to_moscow
 from app.db.session import AsyncSessionLocal
 from app.models.base import utcnow
 from app.models.customer import Customer
@@ -79,6 +79,7 @@ async def create_order_payment(
         payload,
         order_type["id"],
         order_phone=order_phone,
+        order_customer_name=resolve_order_customer_name(payload, customer),
     )
     amount_kopecks = calculate_order_amount_kopecks(order_body, delivery_calculation=delivery_calculation)
     redirect_due_date = resolve_payment_redirect_due_date(payload.complete_before)
@@ -1360,7 +1361,7 @@ def build_local_order_status(local_order: Order) -> dict[str, Any]:
         "payment_amount_kopecks": local_order.payment_amount_kopecks,
         "number": None,
         "sum": float(local_order.total_sum) if local_order.total_sum is not None else None,
-        "complete_before": local_order.complete_before.isoformat() if local_order.complete_before else None,
+        "complete_before": to_moscow(local_order.complete_before).isoformat() if local_order.complete_before else None,
         "comment": local_order.comment,
         "notification_event": local_order.notification_event,
         "should_notify_customer": False,
@@ -1374,6 +1375,7 @@ def build_iiko_order_body(
     order_type_id: str,
     *,
     order_phone: str,
+    order_customer_name: str | None = None,
 ) -> dict[str, Any]:
     order: dict[str, Any] = {
         "phone": order_phone,
@@ -1382,6 +1384,8 @@ def build_iiko_order_body(
         "guests": {"count": payload.guests_count, "splitBetweenPersons": False},
     }
 
+    if order_customer_name:
+        order["customer"] = {"name": order_customer_name}
     if payload.comment:
         order["comment"] = payload.comment
     if payload.complete_before is not None:
@@ -1465,6 +1469,11 @@ def resolve_order_phone(payload: OrderCreateIn, customer: Customer | None) -> st
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Order phone must match authenticated customer")
 
     return customer.phone
+
+
+def resolve_order_customer_name(payload: OrderCreateIn, customer: Customer | None) -> str | None:
+    """Use the checkout name first, falling back to the authenticated profile name."""
+    return payload.name or (customer.name if customer is not None else None)
 
 
 def build_iiko_item(organization: Organization, item: OrderItemIn) -> dict[str, Any]:
@@ -1849,9 +1858,8 @@ def build_delivery_point(delivery_point: DeliveryPointIn) -> dict[str, Any]:
 
 
 def format_iiko_datetime(value: datetime) -> str:
-    timezone = get_iiko_terminal_timezone()
     if value.tzinfo is not None:
-        value = value.astimezone(timezone).replace(tzinfo=None)
+        value = value.astimezone(MOSCOW_TZ).replace(tzinfo=None)
 
     return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
@@ -1880,14 +1888,7 @@ def resolve_new_order_payment_deadline(complete_before: datetime | None) -> date
 def normalize_order_datetime(value: datetime) -> datetime:
     if value.tzinfo is not None:
         return value.astimezone(timezone.utc)
-    return value.replace(tzinfo=get_iiko_terminal_timezone()).astimezone(timezone.utc)
-
-
-def get_iiko_terminal_timezone() -> ZoneInfo | timezone:
-    try:
-        return ZoneInfo(settings.iiko_terminal_timezone)
-    except ZoneInfoNotFoundError:
-        return timezone.utc
+    return value.replace(tzinfo=MOSCOW_TZ).astimezone(timezone.utc)
 
 
 def detect_order_kind(order: dict[str, Any]) -> OrderKind | None:

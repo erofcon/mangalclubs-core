@@ -4,7 +4,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+
+from app.core.time import to_moscow
 
 
 OrderNotificationEvent = Literal["order_created", "pickup_ready", "delivery_on_way", "delivery_delivered"]
@@ -40,6 +42,10 @@ class CustomerDeviceOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("updated_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
+
 
 class CustomerOrderNotificationOut(BaseModel):
     id: UUID
@@ -51,6 +57,10 @@ class CustomerOrderNotificationOut(BaseModel):
     created_at: datetime = Field(serialization_alias="createdAt")
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("created_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
 
 
 class CustomerUnreadNotificationsOut(BaseModel):

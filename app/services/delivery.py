@@ -1,6 +1,6 @@
 import json
 from decimal import Decimal
-from math import atan2, cos, radians, sin, sqrt
+from math import atan2, cos, isfinite, radians, sin, sqrt
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -13,6 +13,8 @@ from app.models.organization import Organization
 from app.schemas.delivery import DeliveryCheckIn
 from app.schemas.delivery import DeliveryZoneCreate, DeliveryZoneUpdate
 from app.services.geocoding import resolve_address_for_coordinates
+
+MAX_DELIVERY_ZONE_DISTANCE_KM = Decimal("9999.99")
 
 DEFAULT_GROZNY_DELIVERY_AREA_GEOJSON: dict = {
     "type": "Polygon",
@@ -230,6 +232,8 @@ async def calculate_delivery_for_coordinates(
     latitude: float,
     longitude: float,
 ) -> dict:
+    validate_delivery_coordinates(latitude=latitude, longitude=longitude)
+
     distance_km = calculate_haversine_distance_km(
         float(organization.latitude),
         float(organization.longitude),
@@ -238,25 +242,18 @@ async def calculate_delivery_for_coordinates(
     )
 
     if not is_point_in_delivery_area(latitude=latitude, longitude=longitude):
-        return {
-            "available": False,
-            "reason": "outside_delivery_area",
-            "distance_km": float(distance_km),
-            "price": None,
-            "zone": None,
-            "address": None,
-        }
+        return unavailable_delivery_calculation("outside_delivery_area", distance_km)
+
+    # DeliveryZone.distance_* are NUMERIC(6, 2), so PostgreSQL cannot bind a
+    # larger value to the comparison. This can happen when coordinates come
+    # from a bad IP geolocation result. Treat it as an unavailable delivery
+    # instead of allowing a database exception to escape from the request.
+    if distance_km > MAX_DELIVERY_ZONE_DISTANCE_KM:
+        return unavailable_delivery_calculation("delivery_distance_out_of_range", distance_km)
 
     zone = await find_delivery_zone_for_distance(db, distance_km)
     if zone is None:
-        return {
-            "available": False,
-            "reason": "delivery_tariff_not_configured",
-            "distance_km": float(distance_km),
-            "price": None,
-            "zone": None,
-            "address": None,
-        }
+        return unavailable_delivery_calculation("delivery_tariff_not_configured", distance_km)
 
     return {
         "available": True,
@@ -285,6 +282,8 @@ async def ensure_delivery_available_for_coordinates(
         reason = calculation["reason"]
         if reason == "outside_delivery_area":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Delivery address is outside Grozny delivery area")
+        if reason == "delivery_distance_out_of_range":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Delivery address coordinates are invalid")
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Delivery tariff is not configured")
 
     return calculation
@@ -312,6 +311,9 @@ async def resolve_delivery_organization(
 
 
 async def find_delivery_zone_for_distance(db: AsyncSession, distance_km: Decimal) -> DeliveryZone | None:
+    if distance_km > MAX_DELIVERY_ZONE_DISTANCE_KM:
+        return None
+
     return await db.scalar(
         select(DeliveryZone)
         .where(
@@ -338,8 +340,31 @@ def calculate_haversine_distance_km(
         sin(delta_latitude / 2) ** 2
         + cos(origin_latitude_rad) * cos(target_latitude_rad) * sin(delta_longitude / 2) ** 2
     )
+    # Floating-point rounding can produce a value just outside [0, 1].
+    haversine = min(1.0, max(0.0, haversine))
     distance = 2 * 6371.0088 * atan2(sqrt(haversine), sqrt(1 - haversine))
     return Decimal(str(distance)).quantize(Decimal("0.01"))
+
+
+def validate_delivery_coordinates(*, latitude: float, longitude: float) -> None:
+    if (
+        not isfinite(latitude)
+        or not isfinite(longitude)
+        or not (-90 <= latitude <= 90)
+        or not (-180 <= longitude <= 180)
+    ):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Invalid delivery coordinates")
+
+
+def unavailable_delivery_calculation(reason: str, distance_km: Decimal) -> dict:
+    return {
+        "available": False,
+        "reason": reason,
+        "distance_km": float(distance_km),
+        "price": None,
+        "zone": None,
+        "address": None,
+    }
 
 
 def get_delivery_area_geojson() -> dict:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from math import isfinite
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from app.core.time import normalize_moscow_input, to_moscow
 
 OrderKind = Literal["delivery", "pickup"]
 DeliveryStatus = Literal[
@@ -84,6 +86,13 @@ class OrderItemIn(BaseModel):
 class DeliveryCoordinatesIn(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def validate_finite_coordinate(cls, value: float) -> float:
+        if not isfinite(value):
+            raise ValueError("coordinate must be finite")
+        return value
 
 
 class DeliveryAddressIn(BaseModel):
@@ -165,6 +174,11 @@ class OrderCreateIn(BaseModel):
         max_length=64,
     )
     phone: str | None = Field(default=None, min_length=8, max_length=32)
+    name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("name", "customerName", "customer_name", "clientName", "client_name"),
+        max_length=255,
+    )
     comment: str | None = Field(default=None, max_length=1000)
     complete_before: datetime | None = Field(
         default=None,
@@ -189,7 +203,7 @@ class OrderCreateIn(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    @field_validator("phone", "comment", "organization_slug", "success_url", "fail_url", mode="before")
+    @field_validator("phone", "name", "comment", "organization_slug", "success_url", "fail_url", mode="before")
     @classmethod
     def strip_strings(cls, value: Any) -> Any:
         if value is None:
@@ -213,6 +227,11 @@ class OrderCreateIn(BaseModel):
         if self.delivery_point is None:
             raise ValueError("deliveryPoint is required for delivery")
         return self
+
+    @field_validator("complete_before", mode="after")
+    @classmethod
+    def normalize_complete_before_timezone(cls, value: datetime | None) -> datetime | None:
+        return normalize_moscow_input(value)
 
 
 class IikoOrderInfoOut(BaseModel):
@@ -275,11 +294,15 @@ class OrderStatusOut(BaseModel):
     payment_amount_kopecks: int | None = Field(default=None, serialization_alias="paymentAmountKopecks")
     number: int | None = None
     sum: float | None = None
-    complete_before: str | None = Field(default=None, serialization_alias="completeBefore")
+    complete_before: datetime | None = Field(default=None, serialization_alias="completeBefore")
     comment: str | None = None
     notification_event: OrderNotificationEvent | None = Field(default=None, serialization_alias="notificationEvent")
     should_notify_customer: bool = Field(serialization_alias="shouldNotifyCustomer")
     error_info: dict[str, Any] | None = Field(default=None, serialization_alias="errorInfo")
+
+    @field_serializer("complete_before")
+    def serialize_moscow_datetime(self, value: datetime | None) -> datetime | None:
+        return to_moscow(value)
 
 
 class OrderStoredOut(BaseModel):
@@ -319,6 +342,10 @@ class OrderStoredOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("complete_before", "created_at", "updated_at")
+    def serialize_moscow_datetime(self, value: datetime | None) -> datetime | None:
+        return to_moscow(value)
+
 
 class CustomerOrderOut(BaseModel):
     id: UUID
@@ -347,6 +374,10 @@ class CustomerOrderOut(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_serializer("complete_before", "created_at", "updated_at")
+    def serialize_moscow_datetime(self, value: datetime | None) -> datetime | None:
+        return to_moscow(value)
+
 
 class PaymentEventOut(BaseModel):
     id: UUID
@@ -365,3 +396,7 @@ class PaymentEventOut(BaseModel):
     created_at: datetime = Field(serialization_alias="createdAt")
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("created_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)

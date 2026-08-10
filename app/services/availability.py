@@ -49,6 +49,33 @@ def get_organization_order_time_slots(
     hours_by_weekday = {item.weekday: item for item in organization.working_hours}
     windows = build_order_time_windows(hours_by_weekday, slot_date, local_timezone)
 
+    slot_pairs = [
+        (starts_at, ends_at)
+        for window_start, window_end in windows
+        for starts_at, ends_at in split_window_into_slots(window_start, window_end, step_minutes)
+    ]
+
+    # Do not offer slots that have already passed today.  The rounding keeps
+    # the same :00/:30 (or configured step) boundaries on the current day.
+    local_now = get_local_now(None)
+    if slot_date == local_now.date():
+        current_minutes = local_now.hour * 60 + local_now.minute
+        if local_now.second or local_now.microsecond:
+            current_minutes += 1
+        first_available_minutes = (
+            (current_minutes + step_minutes - 1) // step_minutes
+        ) * step_minutes
+        first_available_at = datetime.combine(
+            slot_date,
+            time.min,
+            tzinfo=local_timezone,
+        ) + timedelta(minutes=first_available_minutes)
+        slot_pairs = [
+            (starts_at, ends_at)
+            for starts_at, ends_at in slot_pairs
+            if starts_at >= first_available_at
+        ]
+
     return {
         "organization_id": organization.id,
         "slug": organization.slug,
@@ -58,11 +85,7 @@ def get_organization_order_time_slots(
         "step_minutes": step_minutes,
         "working_hours": organization.working_hours,
         "windows": [{"starts_at": starts_at, "ends_at": ends_at} for starts_at, ends_at in windows],
-        "slots": [
-            {"starts_at": starts_at, "ends_at": ends_at}
-            for window_start, window_end in windows
-            for starts_at, ends_at in split_window_into_slots(window_start, window_end, step_minutes)
-        ],
+        "slots": [{"starts_at": starts_at, "ends_at": ends_at} for starts_at, ends_at in slot_pairs],
     }
 
 
@@ -72,6 +95,44 @@ def ensure_organization_accepts_orders_now(organization: Organization) -> None:
         return
 
     raise HTTPException(status.HTTP_409_CONFLICT, availability["message"])
+
+
+def ensure_order_time_slot_is_available(
+    organization: Organization,
+    complete_before: datetime,
+    *,
+    step_minutes: int = 30,
+) -> None:
+    """Validate a scheduled order against the server-generated Moscow slots."""
+    local_complete_before = get_local_now(complete_before)
+    if local_complete_before.second or local_complete_before.microsecond:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Selected order time must start on a minute boundary",
+        )
+    local_now = get_local_now(None)
+    if local_complete_before <= local_now:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Selected order time is in the past",
+        )
+
+    schedule = get_organization_order_time_slots(
+        organization,
+        target_date=local_complete_before.date(),
+        step_minutes=step_minutes,
+    )
+
+    if any(
+        slot["starts_at"] == local_complete_before
+        for slot in schedule["slots"]
+    ):
+        return
+
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        "Selected order time is no longer available",
+    )
 
 
 def build_working_hours_availability(orders_available: bool, reason: str, message: str) -> dict[str, Any]:

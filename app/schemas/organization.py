@@ -267,10 +267,18 @@ class OrganizationOrderTimeWindowOut(BaseModel):
     starts_at: datetime = Field(serialization_alias="startsAt")
     ends_at: datetime = Field(serialization_alias="endsAt")
 
+    @field_serializer("starts_at", "ends_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
+
 
 class OrganizationOrderTimeSlotOut(BaseModel):
     starts_at: datetime = Field(serialization_alias="startsAt")
     ends_at: datetime = Field(serialization_alias="endsAt")
+
+    @field_serializer("starts_at", "ends_at")
+    def serialize_moscow_datetime(self, value: datetime) -> datetime:
+        return to_moscow(value)
 
 
 class OrganizationOrderTimeSlotsOut(BaseModel):

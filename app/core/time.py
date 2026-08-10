@@ -26,13 +26,14 @@ def to_moscow(value: datetime | None) -> datetime | None:
 
 
 def normalize_moscow_input(value: datetime | None) -> datetime | None:
-    """Normalize client input as Moscow wall-clock time.
+    """Normalize an API datetime to the Moscow business timezone.
 
-    Offset information supplied by a client is deliberately ignored: the
-    backend is the source of truth and scheduled restaurant times are entered
-    in Moscow time.  The resulting value is timezone-aware and suitable for
-    UTC storage.
+    A timezone-aware value represents an instant and must be converted rather
+    than having its offset discarded.  A naive value is accepted for backwards
+    compatibility and is interpreted as a Moscow wall-clock value.
     """
     if value is None:
         return None
-    return value.replace(tzinfo=None).replace(tzinfo=MOSCOW_TZ)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=MOSCOW_TZ)
+    return value.astimezone(MOSCOW_TZ)

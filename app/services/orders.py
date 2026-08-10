@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.time import MOSCOW_TZ, to_moscow
+from app.core.time import MOSCOW_TZ, now_moscow, to_moscow
 from app.db.session import AsyncSessionLocal
 from app.models.base import utcnow
 from app.models.customer import Customer
@@ -21,7 +21,10 @@ from app.models.menu import MenuItemContent
 from app.models.order import CustomerOrderNotification, Order, TBankPayment, TBankPaymentEvent
 from app.models.organization import Organization
 from app.schemas.order import DeliveryPointIn, OrderCreateIn, OrderItemIn, OrderKind, OrderModifierIn
-from app.services.availability import ensure_organization_accepts_orders_now
+from app.services.availability import (
+    ensure_order_time_slot_is_available,
+    ensure_organization_accepts_orders_now,
+)
 from app.services.delivery import ensure_delivery_available_for_coordinates
 from app.services.iiko import (
     IikoAuthorizationError,
@@ -68,6 +71,8 @@ async def create_order_payment(
 ) -> dict[str, Any]:
     order_phone = resolve_order_phone(payload, customer)
     organization = await resolve_order_organization(db, payload)
+    effective_complete_before = resolve_order_complete_before(organization, payload.complete_before)
+    payload = payload.model_copy(update={"complete_before": effective_complete_before})
     delivery_calculation = await resolve_delivery_calculation(db, organization, payload)
     access_token = await get_order_access_token(db, organization)
     terminal_group_id = await get_order_terminal_group_id(access_token, organization)
@@ -1858,10 +1863,31 @@ def build_delivery_point(delivery_point: DeliveryPointIn) -> dict[str, Any]:
 
 
 def format_iiko_datetime(value: datetime) -> str:
-    if value.tzinfo is not None:
-        value = value.astimezone(MOSCOW_TZ).replace(tzinfo=None)
+    value = to_moscow(value)
+    if value is None:
+        raise ValueError("iiko datetime value is required")
+    value = value.replace(tzinfo=None)
 
     return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def resolve_order_complete_before(
+    organization: Organization,
+    complete_before: datetime | None,
+) -> datetime:
+    """Return the canonical Moscow completion time for a new order.
+
+    Missing ``completeBefore`` means ASAP.  The backend clock is authoritative
+    so this path cannot be affected by the device timezone.
+    """
+    if complete_before is None:
+        return now_moscow().replace(second=0, microsecond=0) + timedelta(minutes=30)
+
+    complete_before = to_moscow(complete_before)
+    if complete_before is None:
+        raise ValueError("complete_before is required")
+    ensure_order_time_slot_is_available(organization, complete_before)
+    return complete_before
 
 
 def resolve_payment_redirect_due_date(complete_before: datetime | None) -> str | None:

@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 
 from app.core.time import MOSCOW_TZ
 from app.models.organization import Organization, OrganizationWorkingHour
+from app.services.order_payment_policy import get_minimum_scheduled_order_time
 
 
 ORDERS_OPEN_MESSAGE = "Сейчас можно оформить онлайн-заказ."
@@ -43,9 +44,11 @@ def get_organization_order_time_slots(
     *,
     target_date: date | None = None,
     step_minutes: int = 30,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    local_now = get_local_now(now)
     local_timezone = get_local_timezone()
-    slot_date = target_date or datetime.now(local_timezone).date()
+    slot_date = target_date or local_now.date()
     hours_by_weekday = {item.weekday: item for item in organization.working_hours}
     windows = build_order_time_windows(hours_by_weekday, slot_date, local_timezone)
 
@@ -55,21 +58,11 @@ def get_organization_order_time_slots(
         for starts_at, ends_at in split_window_into_slots(window_start, window_end, step_minutes)
     ]
 
-    # Do not offer slots that have already passed today.  The rounding keeps
-    # the same :00/:30 (or configured step) boundaries on the current day.
-    local_now = get_local_now(None)
+    # A scheduled order must leave enough time before completeBefore for the
+    # customer to finish payment. Keep this rule on the backend so clients in
+    # every timezone receive the same Moscow-time availability.
     if slot_date == local_now.date():
-        current_minutes = local_now.hour * 60 + local_now.minute
-        if local_now.second or local_now.microsecond:
-            current_minutes += 1
-        first_available_minutes = (
-            (current_minutes + step_minutes - 1) // step_minutes
-        ) * step_minutes
-        first_available_at = datetime.combine(
-            slot_date,
-            time.min,
-            tzinfo=local_timezone,
-        ) + timedelta(minutes=first_available_minutes)
+        first_available_at = get_minimum_scheduled_order_time(local_now)
         slot_pairs = [
             (starts_at, ends_at)
             for starts_at, ends_at in slot_pairs
@@ -121,6 +114,7 @@ def ensure_order_time_slot_is_available(
         organization,
         target_date=local_complete_before.date(),
         step_minutes=step_minutes,
+        now=local_now,
     )
 
     if any(

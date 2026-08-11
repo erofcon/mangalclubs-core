@@ -35,6 +35,7 @@ from app.services.iiko import (
 )
 from app.services.otp import InvalidPhoneNumberError, normalize_phone
 from app.services.notifications import ensure_order_notification
+from app.services.order_payment_policy import get_minimum_payment_deadline
 from app.services.tbank import (
     TBankError,
     get_tbank_credentials,
@@ -59,7 +60,6 @@ IIKO_DISPATCH_IN_PROGRESS_TIMEOUT_SECONDS = 300
 FINAL_PAYMENT_STATUSES = {"paid", "payment_failed", "payment_cancelled", "payment_expired"}
 ACTIVE_PAYMENT_STATUSES = {"payment_pending", "payment_form_created"}
 ARCHIVED_PAYMENT_STATUSES = {"payment_failed", "payment_cancelled", "payment_expired"}
-MIN_TBANK_REDIRECT_DUE_SECONDS = 60
 PUBLIC_ORDER_NUMBER_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 PUBLIC_ORDER_NUMBER_MIN_LENGTH = 6
 
@@ -1892,7 +1892,7 @@ def resolve_order_complete_before(
 
 def resolve_payment_redirect_due_date(complete_before: datetime | None) -> str | None:
     deadline = resolve_new_order_payment_deadline(complete_before)
-    min_deadline = utcnow() + timedelta(seconds=MIN_TBANK_REDIRECT_DUE_SECONDS)
+    min_deadline = get_minimum_payment_deadline(utcnow())
     if deadline < min_deadline:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

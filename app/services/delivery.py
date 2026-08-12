@@ -134,6 +134,8 @@ async def create_delivery_zone(db: AsyncSession, payload: DeliveryZoneCreate) ->
         distance_from_km=payload.distance_from_km,
         distance_to_km=payload.distance_to_km,
         price=payload.price,
+        sort_order=0,
+        is_active=True,
         delivery_time=payload.delivery_time,
     )
     db.add(zone)
